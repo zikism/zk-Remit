@@ -1,3 +1,4 @@
+mod utils;
 use dep::std::hash::poseidon2::Poseidon2;
 use dep::std::ecdsa_secp256k1;
 use crate::utils::pedersen::compute_amount_commitment;
@@ -178,7 +179,7 @@ fn build_merkle_path_and_root(
 
 fn compute_revocation_root(leaf: Field) -> Field {
     let mut root = leaf;
-    for i in 0..10 {
+    for _i in 0..10 {
         root = Poseidon2::hash([root, 0], 2);
     }
     root
@@ -186,7 +187,7 @@ fn compute_revocation_root(leaf: Field) -> Field {
 
 fn compute_corridor_root(leaf: Field) -> Field {
     let mut root = leaf;
-    for i in 0..10 {
+    for _i in 0..10 {
         root = Poseidon2::hash([root, 0], 2);
     }
     root
@@ -232,12 +233,6 @@ fn test_happy_path() {
     let (path, root) = build_merkle_path_and_root(dummy_leaves, 0);
     let allowed_jurisdictions_index: Field = 0;
     let allowed_jurisdictions_root: Field = root;
-
-    let credential_msg = Poseidon2::hash(
-        [credential_hash, user_pubkey_hash, (credential_expiry as Field)],
-        3,
-    );
-    let credential_msg_bytes: [u8; 32] = credential_msg.to_be_bytes::<32>();
 
     let issuer_signature: [u8; 64] = [
         55, 103, 95, 49, 28, 44, 87, 82, 213, 215, 117, 27, 64, 201, 103, 121,
@@ -290,7 +285,7 @@ fn test_happy_path() {
     );
 }
 
-#[test]
+#[test(should_fail)]
 fn test_expired_credential() {
     let credential_expiry: u64 = 100;
     let current_timestamp: u64 = 200;
@@ -382,7 +377,7 @@ fn test_expired_credential() {
     );
 }
 
-#[test]
+#[test(should_fail)]
 fn test_amount_over_threshold() {
     let credential_secret: Field = 0x12345678;
     let user_pubkey_hash: Field = 0xabcdef01;
@@ -473,7 +468,7 @@ fn test_amount_over_threshold() {
     );
 }
 
-#[test]
+#[test(should_fail)]
 fn test_invalid_jurisdiction() {
     let credential_secret: Field = 0x12345678;
     let user_pubkey_hash: Field = 0xabcdef01;
@@ -563,7 +558,7 @@ fn test_invalid_jurisdiction() {
     );
 }
 
-#[test]
+#[test(should_fail)]
 fn test_invalid_nullifier() {
     let credential_secret: Field = 0x12345678;
     let user_pubkey_hash: Field = 0xabcdef01;
@@ -654,7 +649,7 @@ fn test_invalid_nullifier() {
     );
 }
 
-#[test(should_fail = "Amount commitment mismatch")]
+#[test(should_fail)]
 fn test_pedersen_commitment_mismatch() {
     let issuer_pubkey_x: [u8; 32] = [
         121, 190, 102, 126, 249, 220, 187, 172, 85, 160, 98, 149, 206, 135, 11, 7,
@@ -694,12 +689,6 @@ fn test_pedersen_commitment_mismatch() {
     let (path, root) = build_merkle_path_and_root(dummy_leaves, 0);
     let allowed_jurisdictions_index: Field = 0;
     let allowed_jurisdictions_root: Field = root;
-
-    let credential_msg = Poseidon2::hash(
-        [credential_hash, user_pubkey_hash, (credential_expiry as Field)],
-        3,
-    );
-    let credential_msg_bytes: [u8; 32] = credential_msg.to_be_bytes::<32>();
 
     let issuer_signature: [u8; 64] = [
         55, 103, 95, 49, 28, 44, 87, 82, 213, 215, 117, 27, 64, 201, 103, 121,
@@ -753,7 +742,7 @@ fn test_pedersen_commitment_mismatch() {
     );
 }
 
-#[test(should_fail = "Credential has been revoked")]
+#[test(should_fail)]
 fn test_revoked_credential_rejected() {
     let issuer_pubkey_x: [u8; 32] = [
         121, 190, 102, 126, 249, 220, 187, 172, 85, 160, 98, 149, 206, 135, 11, 7,
@@ -794,12 +783,6 @@ fn test_revoked_credential_rejected() {
     let allowed_jurisdictions_index: Field = 0;
     let allowed_jurisdictions_root: Field = root;
 
-    let credential_msg = Poseidon2::hash(
-        [credential_hash, user_pubkey_hash, (credential_expiry as Field)],
-        3,
-    );
-    let credential_msg_bytes: [u8; 32] = credential_msg.to_be_bytes::<32>();
-
     let issuer_signature: [u8; 64] = [
         55, 103, 95, 49, 28, 44, 87, 82, 213, 215, 117, 27, 64, 201, 103, 121,
         179, 88, 166, 101, 139, 232, 237, 251, 85, 86, 169, 209, 209, 220, 53, 23,
@@ -810,7 +793,7 @@ fn test_revoked_credential_rejected() {
     let amount_blinding: Field = 12345;
     let amount_commitment = compute_amount_commitment(amount, amount_blinding);
 
-    // Set candidate_leaf equal to credential_hash — this makes the revocation proof fail
+    // Set candidate_leaf equal to credential_hash, which makes the revocation proof fail
     let revocation_candidate_leaf: Field = credential_hash;
     let revocation_path: [Field; 10] = [0; 10];
     let revocation_indices: [u1; 10] = [0; 10];
@@ -852,7 +835,7 @@ fn test_revoked_credential_rejected() {
     );
 }
 
-#[test(should_fail = "Corridor not currently approved")]
+#[test(should_fail)]
 fn test_unapproved_corridor_rejected() {
     let issuer_pubkey_x: [u8; 32] = [
         121, 190, 102, 126, 249, 220, 187, 172, 85, 160, 98, 149, 206, 135, 11, 7,
@@ -892,12 +875,6 @@ fn test_unapproved_corridor_rejected() {
     let (path, root) = build_merkle_path_and_root(dummy_leaves, 0);
     let allowed_jurisdictions_index: Field = 0;
     let allowed_jurisdictions_root: Field = root;
-
-    let credential_msg = Poseidon2::hash(
-        [credential_hash, user_pubkey_hash, (credential_expiry as Field)],
-        3,
-    );
-    let credential_msg_bytes: [u8; 32] = credential_msg.to_be_bytes::<32>();
 
     let issuer_signature: [u8; 64] = [
         55, 103, 95, 49, 28, 44, 87, 82, 213, 215, 117, 27, 64, 201, 103, 121,

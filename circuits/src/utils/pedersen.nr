@@ -1,10 +1,10 @@
 use dep::std::hash::poseidon2::Poseidon2;
 
-fn compute_amount_commitment(amount: u64, blinding_factor: Field) -> Field {
+pub fn compute_amount_commitment(amount: u64, blinding_factor: Field) -> Field {
     Poseidon2::hash([(amount as Field), blinding_factor], 2)
 }
 
-fn verify_amount_range(amount: u64, threshold: u64) -> bool {
+pub fn verify_amount_range(amount: u64, threshold: u64) -> bool {
     amount < threshold
 }
 

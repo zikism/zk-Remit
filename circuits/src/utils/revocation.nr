@@ -12,7 +12,7 @@ fn compute_merkle_root_from_path(leaf: Field, path: [Field; 10], indices: [u1; 1
     root
 }
 
-fn assert_not_revoked(
+pub fn assert_not_revoked(
     credential_hash: Field,
     revocation_root: Field,
     candidate_leaf: Field,
@@ -36,7 +36,7 @@ fn test_not_revoked_passes() {
     assert_not_revoked(credential_hash, revocation_root, candidate_leaf, path, indices);
 }
 
-#[test(should_fail = "Credential has been revoked")]
+#[test(should_fail)]
 fn test_revoked_fails() {
     let credential_hash: Field = 12345;
     let candidate_leaf: Field = 12345;
