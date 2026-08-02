@@ -6,6 +6,7 @@ import { ProofModule } from './proof/proof.module';
 import { PaymentModule } from './payment/payment.module';
 import { NullifierModule } from './nullifier/nullifier.module';
 import { HashModule } from './hash/hash.module';
+import { MerkleModule } from './merkle/merkle.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { HashModule } from './hash/hash.module';
     PaymentModule,
     NullifierModule,
     HashModule,
+    MerkleModule,
   ],
 })
 export class AppModule {}

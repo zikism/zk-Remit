@@ -142,4 +142,26 @@ describe('zkremit Backend E2E', () => {
     const res = await request(app.getHttpServer()).get('/payment/sep31-info/INVALID');
     expect(res.status).toBe(400);
   });
+
+  it('GET /merkle/jurisdiction-root returns a circuit-consistent root', async () => {
+    const res = await request(app.getHttpServer()).get('/merkle/jurisdiction-root');
+    expect(res.status).toBe(200);
+    expect(res.body.root).toMatch(/^0x[0-9a-f]{64}$/);
+    // Pinned against a nargo 0.36.0 helper circuit (see merkle.service.spec.ts).
+    expect(res.body.root).toBe('0x24fd258bcaaa111c9f434e984d85c75cbed93537096f1bf489b9373279ef2d53');
+  });
+
+  it('GET /merkle/corridor-root returns a circuit-consistent root', async () => {
+    const res = await request(app.getHttpServer()).get('/merkle/corridor-root');
+    expect(res.status).toBe(200);
+    expect(res.body.root).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(res.body.root).toBe('0x01760c4255b3d3ba7fcc6517567a41641c4a133b7b9aba08f4ef21d1bd08a86d');
+  });
+
+  it('GET /merkle/revocation-root returns the zero root when nothing is revoked', async () => {
+    const res = await request(app.getHttpServer()).get('/merkle/revocation-root');
+    expect(res.status).toBe(200);
+    expect(res.body.root).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(res.body.root).toBe('0x' + '0'.repeat(64));
+  });
 });
