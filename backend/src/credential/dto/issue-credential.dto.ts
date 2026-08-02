@@ -16,11 +16,13 @@ export class IssueCredentialDto {
 
 export interface CredentialResponse {
   credentialHash: string;
+  credentialSecret: string;
   issuerSignature: string;
   issuerPubkey: string;
+  userPubkeyHash: string;
+  corridorId: string;
   expiry: number;
   jurisdictionCode: number;
-  credentialSecret: string;
 }
 
 export interface IssuerResponse {

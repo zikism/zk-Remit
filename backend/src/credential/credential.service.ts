@@ -135,11 +135,13 @@ export class CredentialService {
 
     return {
       credentialHash: credentialHashHex,
+      credentialSecret,
       issuerSignature,
       issuerPubkey,
+      userPubkeyHash: userPubkeyHashHex,
+      corridorId: corridorIdStr,
       expiry: expirySec,
       jurisdictionCode: corridorInfo.senderJurisdiction,
-      credentialSecret,
     };
   }
 

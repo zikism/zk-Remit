@@ -155,13 +155,15 @@ describe('zkremit Backend E2E', () => {
     const res = await request(app.getHttpServer()).get('/merkle/corridor-root');
     expect(res.status).toBe(200);
     expect(res.body.root).toMatch(/^0x[0-9a-f]{64}$/);
-    expect(res.body.root).toBe('0x01760c4255b3d3ba7fcc6517567a41641c4a133b7b9aba08f4ef21d1bd08a86d');
+    expect(res.body.root).toBe('0x2ae6c2f478d439f420fc2aff3e3b0281ee56412071103027b3266d3f84dee600');
   });
 
-  it('GET /merkle/revocation-root returns the zero root when nothing is revoked', async () => {
+  it('GET /merkle/revocation-root returns the candidate-at-position-0 root when nothing is revoked', async () => {
     const res = await request(app.getHttpServer()).get('/merkle/revocation-root');
     expect(res.status).toBe(200);
     expect(res.body.root).toMatch(/^0x[0-9a-f]{64}$/);
-    expect(res.body.root).toBe('0x' + '0'.repeat(64));
+    // Candidate Poseidon2::hash([0], 1) at position 0, pinned against the
+    // nargo 0.36.0 oracle (see merkle.service.spec.ts).
+    expect(res.body.root).toBe('0x097ce8473506051524c0eb452870e04fadc52385c087b750f52874f05a299c78');
   });
 });
