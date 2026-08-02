@@ -5,6 +5,13 @@ import { CredentialService } from './credential.service';
 import { IssueCredentialDto } from './dto/issue-credential.dto';
 import { PoseidonService } from '../hash/poseidon.service';
 
+jest.mock('../db/client', () => ({
+  getPool: jest.fn(() => ({
+    query: jest.fn().mockResolvedValue({ rows: [] }),
+  })),
+  closePool: jest.fn(),
+}));
+
 describe('CredentialService', () => {
   let service: CredentialService;
   let configService: ConfigService;
@@ -89,6 +96,30 @@ describe('CredentialService', () => {
     const pub = secp256k1.getPublicKey(Buffer.from(mockPrivateKey, 'hex'), false);
     // The credential response should expose x || y (64 bytes).
     expect(pub.subarray(1).length).toBe(64);
+  });
+
+  it('should sign the raw credential message with prehash:false', async () => {
+    poseidonServiceMock.poseidon2.mockReturnValue(0x1234n);
+    poseidonServiceMock.fieldToBytes32.mockReturnValue(
+      Buffer.from('1234000000000000000000000000000000000000000000000000000000000000', 'hex')
+    );
+
+    const dto: IssueCredentialDto = {
+      walletAddress: 'GAXK2SOZ2RI4ZJ6ZYVJXL6QY7YV5Z7G7Y6Y7Y6Y7Y6Y7Y6Y7Y6Y7Y6Y7',
+      kycProvider: 'mock-issuer',
+      corridorId: 'NG-PH',
+    };
+
+    const response = await service.issue(dto);
+    const sig = Buffer.from(response.issuerSignature.slice(2), 'hex');
+    const msg = Buffer.from('1234000000000000000000000000000000000000000000000000000000000000', 'hex');
+    const pub = secp256k1.getPublicKey(Buffer.from(mockPrivateKey, 'hex'), false);
+
+    // prehash:false: the 32 message bytes are signed directly (matches the
+    // circuit's ecdsa_secp256k1::verify_signature).
+    expect(secp256k1.verify(sig, msg, pub, { prehash: false })).toBe(true);
+    // prehash:true (v2 default) would sign SHA256(msg) instead -> must NOT verify.
+    expect(secp256k1.verify(sig, msg, pub)).toBe(false);
   });
 
   it('should throw for unsupported corridor', async () => {

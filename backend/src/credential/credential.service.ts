@@ -90,7 +90,10 @@ export class CredentialService {
       expiryBigInt,
     ]);
     const message = this.poseidonService.fieldToBytes32(credentialMsg);
-    const signature = secp256k1.sign(message, this.issuerPrivateKey);
+    // prehash:false signs the 32 message bytes directly. @noble/curves v2
+    // defaults to prehash:true (SHA-256 first), which the circuit's
+    // ecdsa_secp256k1::verify_signature does NOT perform.
+    const signature = secp256k1.sign(message, this.issuerPrivateKey, { prehash: false });
     const issuerSignature = '0x' + Buffer.from(signature).toString('hex');
 
     const issuerPubkey = '0x' + this.issuerPublicKey.toString('hex');
