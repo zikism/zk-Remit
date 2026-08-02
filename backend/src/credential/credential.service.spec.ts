@@ -2,15 +2,33 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { CredentialService } from './credential.service';
 import { IssueCredentialDto } from './dto/issue-credential.dto';
+import { PoseidonService } from '../hash/poseidon.service';
 
 describe('CredentialService', () => {
   let service: CredentialService;
   let configService: ConfigService;
 
   const mockPrivateKey = 'a'.repeat(128);
-  const mockPublicKey = 'b'.repeat(64);
+  // 64-byte secp256k1 point (x || y) as the circuit requires.
+  const mockPublicKey = 'b'.repeat(128);
+
+  const poseidonServiceMock = {
+    poseidon2: jest.fn((inputs: bigint[]) =>
+      inputs.reduce((acc, x) => (acc + x) % (1n << 254n), 0n)
+    ),
+    bytesToFieldChunks: jest.fn((bytes: Uint8Array) => [
+      BigInt('0x' + Buffer.from(bytes).toString('hex').slice(0, 62)),
+    ]),
+    fieldToHex32: jest.fn((field: bigint) =>
+      '0x' + field.toString(16).padStart(64, '0')
+    ),
+    fieldToBytes32: jest.fn((field: bigint) =>
+      Buffer.from(field.toString(16).padStart(64, '0'), 'hex')
+    ),
+  };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         CredentialService,
@@ -24,6 +42,7 @@ describe('CredentialService', () => {
             }),
           },
         },
+        { provide: PoseidonService, useValue: poseidonServiceMock },
       ],
     }).compile();
 
@@ -37,25 +56,31 @@ describe('CredentialService', () => {
 
   it('should require ISSUER_PRIVATE_KEY on construction', () => {
     expect(() => {
-      new CredentialService({
-        get: jest.fn((key: string) => {
-          if (key === 'ISSUER_PRIVATE_KEY') return undefined;
-          if (key === 'ISSUER_PUBLIC_KEY') return mockPublicKey;
-          return undefined;
-        }),
-      } as any);
+      new CredentialService(
+        {
+          get: jest.fn((key: string) => {
+            if (key === 'ISSUER_PRIVATE_KEY') return undefined;
+            if (key === 'ISSUER_PUBLIC_KEY') return mockPublicKey;
+            return undefined;
+          }),
+        } as any,
+        poseidonServiceMock as any
+      );
     }).toThrow('ISSUER_PRIVATE_KEY');
   });
 
-  it('should require ISSUER_PUBLIC_KEY on construction', () => {
+  it('should require a 64-byte ISSUER_PUBLIC_KEY on construction', () => {
     expect(() => {
-      new CredentialService({
-        get: jest.fn((key: string) => {
-          if (key === 'ISSUER_PRIVATE_KEY') return mockPrivateKey;
-          if (key === 'ISSUER_PUBLIC_KEY') return undefined;
-          return undefined;
-        }),
-      } as any);
+      new CredentialService(
+        {
+          get: jest.fn((key: string) => {
+            if (key === 'ISSUER_PRIVATE_KEY') return mockPrivateKey;
+            if (key === 'ISSUER_PUBLIC_KEY') return 'c'.repeat(64);
+            return undefined;
+          }),
+        } as any,
+        poseidonServiceMock as any
+      );
     }).toThrow('ISSUER_PUBLIC_KEY');
   });
 

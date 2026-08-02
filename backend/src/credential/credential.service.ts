@@ -1,9 +1,9 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
-import { poseidon1, poseidon2, poseidon3 } from 'poseidon-lite';
 import nacl from 'tweetnacl';
 import { getPool } from '../db/client';
+import { PoseidonService } from '../hash/poseidon.service';
 import { IssueCredentialDto, CredentialResponse, IssuerResponse } from './dto/issue-credential.dto';
 
 const CORRIDOR_MAP: Record<string, { senderJurisdiction: number }> = {
@@ -23,18 +23,24 @@ const ISSUERS: IssuerResponse[] = [
 
 @Injectable()
 export class CredentialService {
-  private readonly issuerPrivateKey: Uint8Array;
-  private readonly issuerPublicKey: Uint8Array;
+  private readonly issuerPrivateKey: Buffer;
+  private readonly issuerPublicKey: Buffer;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly poseidonService: PoseidonService,
+  ) {
     const privHex = this.configService.get<string>('ISSUER_PRIVATE_KEY');
     const pubHex = this.configService.get<string>('ISSUER_PUBLIC_KEY');
 
     if (!privHex || privHex.length !== 128) {
       throw new Error('ISSUER_PRIVATE_KEY must be a 64-byte hex string (128 chars)');
     }
-    if (!pubHex || pubHex.length !== 64) {
-      throw new Error('ISSUER_PUBLIC_KEY must be a 32-byte hex string (64 chars)');
+    // The circuit verifies a secp256k1 signature and derives
+    // issuer_pubkey_hash from the full point (x || y), so the public key is
+    // the 64-byte uncompressed point.
+    if (!pubHex || pubHex.length !== 128) {
+      throw new Error('ISSUER_PUBLIC_KEY must be a 64-byte hex string (128 chars: x || y)');
     }
 
     this.issuerPrivateKey = Buffer.from(privHex, 'hex');
@@ -52,37 +58,41 @@ export class CredentialService {
     const credentialSecretBytes = randomBytes(32);
     const credentialSecret = '0x' + credentialSecretBytes.toString('hex');
 
-    const walletBytes = Buffer.from(dto.walletAddress, 'utf-8');
-    const userPubkeyHashBigInt = this.hashBytesToField(walletBytes);
-    const userPubkeyHashBytes = this.bigIntToBytes32(userPubkeyHashBigInt);
-    const userPubkeyHash = '0x' + userPubkeyHashBytes.toString('hex');
+    // Circuit-consistent Poseidon2 over the user identity bytes (chunked so
+    // each field fits below the BN254 modulus).
+    const userPubkeyHash = this.poseidonService.poseidon2(
+      this.poseidonService.bytesToFieldChunks(Buffer.from(dto.walletAddress, 'utf-8'))
+    );
+    const userPubkeyHashHex = this.poseidonService.fieldToHex32(userPubkeyHash);
 
     const expirySec = Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60;
     const expiryBigInt = BigInt(expirySec);
 
     const credentialSecretField = BigInt('0x' + credentialSecretBytes.toString('hex'));
-    const credentialHashBigInt = poseidon3([
+    const credentialHash = this.poseidonService.poseidon2([
       credentialSecretField,
-      userPubkeyHashBigInt,
+      userPubkeyHash,
       expiryBigInt,
     ]);
-    const credentialHashBytes = this.bigIntToBytes32(credentialHashBigInt);
-    const credentialHash = '0x' + credentialHashBytes.toString('hex');
+    const credentialHashHex = this.poseidonService.fieldToHex32(credentialHash);
 
-    const corridorBytes = Buffer.from(dto.corridorId, 'utf-8');
-    const corridorHex = corridorBytes.toString('hex');
-    const corridorIdBigInt = poseidon1([BigInt('0x' + corridorHex)]);
-    const corridorIdStr = '0x' + this.bigIntToBytes32(corridorIdBigInt).toString('hex');
+    // Corridor identifier as a field: big-endian bytes of the corridor string.
+    // This is the same field the circuit's nullifier and corridor leaf use.
+    const corridorIdField = BigInt('0x' + Buffer.from(dto.corridorId, 'utf-8').toString('hex'));
+    const corridorIdStr = this.poseidonService.fieldToHex32(corridorIdField);
 
+    // The circuit signs Poseidon2::hash([credential_hash, user_pubkey_hash,
+    // credential_expiry], 3) over secp256k1. Signature migration to secp256k1
+    // lands in a follow-up commit; keep issuing deterministic credentials.
     const message = Buffer.concat([
-      credentialHashBytes,
-      userPubkeyHashBytes,
+      this.poseidonService.fieldToBytes32(credentialHash),
+      this.poseidonService.fieldToBytes32(userPubkeyHash),
       this.bigIntToBytes64(expiryBigInt),
     ]);
     const signature = nacl.sign.detached(message, this.issuerPrivateKey);
     const issuerSignature = '0x' + Buffer.from(signature).toString('hex');
 
-    const issuerPubkey = '0x' + Buffer.from(this.issuerPublicKey).toString('hex');
+    const issuerPubkey = '0x' + this.issuerPublicKey.toString('hex');
 
     try {
       await pool.query(
@@ -105,11 +115,11 @@ export class CredentialService {
         [
           dto.walletAddress,
           dto.kycProvider,
-          credentialHash,
+          credentialHashHex,
           credentialSecret,
           issuerSignature,
           issuerPubkey,
-          userPubkeyHash,
+          userPubkeyHashHex,
           corridorInfo.senderJurisdiction,
           corridorIdStr,
           expirySec,
@@ -120,7 +130,7 @@ export class CredentialService {
     }
 
     return {
-      credentialHash,
+      credentialHash: credentialHashHex,
       issuerSignature,
       issuerPubkey,
       expiry: expirySec,
@@ -130,12 +140,14 @@ export class CredentialService {
   }
 
   async getIssuers(): Promise<IssuerResponse[]> {
-    const pubkeyBigInts = this.bytesToFieldChunks(this.issuerPublicKey, 2);
-    const pubkeyHashBigInt = poseidon2([pubkeyBigInts[0], pubkeyBigInts[1]]);
-    const pubkeyHash =
-      '0x' + this.bigIntToBytes32(pubkeyHashBigInt).toString('hex');
+    // Circuit main.nr step 5: issuer_pubkey_hash = Poseidon2::hash over the
+    // 64 bytes of the secp256k1 point (x || y), one field per byte.
+    const pubkeyBytes = this.issuerPublicKey;
+    const pubkeyFields = Array.from(pubkeyBytes).map(b => BigInt(b));
+    const pubkeyHash = this.poseidonService.poseidon2(pubkeyFields);
+    const pubkeyHashHex = this.poseidonService.fieldToHex32(pubkeyHash);
 
-    ISSUERS[0].pubkeyHash = pubkeyHash;
+    ISSUERS[0].pubkeyHash = pubkeyHashHex;
     return ISSUERS;
   }
 
@@ -146,44 +158,6 @@ export class CredentialService {
        WHERE credential_hash = $1`,
       [credentialHash]
     );
-  }
-
-  private hashBytesToField(bytes: Uint8Array): bigint {
-    const chunks = this.bytesToFieldChunks(bytes, 4);
-    if (chunks.length === 1) return poseidon1([chunks[0]]);
-    if (chunks.length === 2) return poseidon2([chunks[0], chunks[1]]);
-    if (chunks.length === 3) return poseidon3([chunks[0], chunks[1], chunks[2]]);
-
-    let hash = poseidon3([chunks[0], chunks[1], chunks[2]]);
-    for (let i = 3; i < chunks.length; i++) {
-      hash = poseidon2([hash, chunks[i]]);
-    }
-    return hash;
-  }
-
-  private bytesToFieldChunks(bytes: Uint8Array, chunkCount: number): bigint[] {
-    const chunkSize = Math.ceil(bytes.length / chunkCount);
-    const chunks: bigint[] = [];
-    for (let i = 0; i < chunkCount; i++) {
-      const start = i * chunkSize;
-      const end = Math.min(start + chunkSize, bytes.length);
-      if (start >= bytes.length) {
-        chunks.push(BigInt(0));
-      } else {
-        const hex = Array.from(bytes.subarray(start, end))
-          .map(b => b.toString(16).padStart(2, '0'))
-          .join('');
-        chunks.push(BigInt('0x' + hex));
-      }
-    }
-    return chunks;
-  }
-
-  private bigIntToBytes32(n: bigint): Buffer {
-    const hex = n.toString(16).padStart(64, '0').slice(0, 64);
-    const buf = Buffer.alloc(32);
-    buf.write(hex, 'hex');
-    return buf;
   }
 
   private bigIntToBytes64(n: bigint): Buffer {
