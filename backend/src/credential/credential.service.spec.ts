@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { CredentialService } from './credential.service';
 import { IssueCredentialDto } from './dto/issue-credential.dto';
 import { PoseidonService } from '../hash/poseidon.service';
@@ -8,9 +9,8 @@ describe('CredentialService', () => {
   let service: CredentialService;
   let configService: ConfigService;
 
-  const mockPrivateKey = 'a'.repeat(128);
-  // 64-byte secp256k1 point (x || y) as the circuit requires.
-  const mockPublicKey = 'b'.repeat(128);
+  // 32-byte secp256k1 private scalar (64 hex chars).
+  const mockPrivateKey = 'a'.repeat(64);
 
   const poseidonServiceMock = {
     poseidon2: jest.fn((inputs: bigint[]) =>
@@ -37,7 +37,6 @@ describe('CredentialService', () => {
           useValue: {
             get: jest.fn((key: string) => {
               if (key === 'ISSUER_PRIVATE_KEY') return mockPrivateKey;
-              if (key === 'ISSUER_PUBLIC_KEY') return mockPublicKey;
               return undefined;
             }),
           },
@@ -58,30 +57,24 @@ describe('CredentialService', () => {
     expect(() => {
       new CredentialService(
         {
-          get: jest.fn((key: string) => {
-            if (key === 'ISSUER_PRIVATE_KEY') return undefined;
-            if (key === 'ISSUER_PUBLIC_KEY') return mockPublicKey;
-            return undefined;
-          }),
+          get: jest.fn(() => undefined),
         } as any,
         poseidonServiceMock as any
       );
     }).toThrow('ISSUER_PRIVATE_KEY');
   });
 
-  it('should require a 64-byte ISSUER_PUBLIC_KEY on construction', () => {
+  it('should reject a non-32-byte ISSUER_PRIVATE_KEY', () => {
     expect(() => {
       new CredentialService(
         {
-          get: jest.fn((key: string) => {
-            if (key === 'ISSUER_PRIVATE_KEY') return mockPrivateKey;
-            if (key === 'ISSUER_PUBLIC_KEY') return 'c'.repeat(64);
-            return undefined;
-          }),
+          get: jest.fn((key: string) =>
+            key === 'ISSUER_PRIVATE_KEY' ? 'a'.repeat(128) : undefined
+          ),
         } as any,
         poseidonServiceMock as any
       );
-    }).toThrow('ISSUER_PUBLIC_KEY');
+    }).toThrow('ISSUER_PRIVATE_KEY');
   });
 
   it('should return issuers with pubkeyHash populated', async () => {
@@ -90,6 +83,12 @@ describe('CredentialService', () => {
     expect(issuers[0].name).toBe('mock-issuer');
     expect(issuers[0].pubkeyHash).toMatch(/^0x[0-9a-f]{64}$/);
     expect(issuers[0].supportedCorridors).toContain('NG-PH');
+  });
+
+  it('should derive a 64-byte secp256k1 public key from the private key', () => {
+    const pub = secp256k1.getPublicKey(Buffer.from(mockPrivateKey, 'hex'), false);
+    // The credential response should expose x || y (64 bytes).
+    expect(pub.subarray(1).length).toBe(64);
   });
 
   it('should throw for unsupported corridor', async () => {

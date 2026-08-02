@@ -1,7 +1,7 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
-import nacl from 'tweetnacl';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { getPool } from '../db/client';
 import { PoseidonService } from '../hash/poseidon.service';
 import { IssueCredentialDto, CredentialResponse, IssuerResponse } from './dto/issue-credential.dto';
@@ -31,20 +31,19 @@ export class CredentialService {
     private readonly poseidonService: PoseidonService,
   ) {
     const privHex = this.configService.get<string>('ISSUER_PRIVATE_KEY');
-    const pubHex = this.configService.get<string>('ISSUER_PUBLIC_KEY');
 
-    if (!privHex || privHex.length !== 128) {
-      throw new Error('ISSUER_PRIVATE_KEY must be a 64-byte hex string (128 chars)');
-    }
-    // The circuit verifies a secp256k1 signature and derives
-    // issuer_pubkey_hash from the full point (x || y), so the public key is
-    // the 64-byte uncompressed point.
-    if (!pubHex || pubHex.length !== 128) {
-      throw new Error('ISSUER_PUBLIC_KEY must be a 64-byte hex string (128 chars: x || y)');
+    // The circuit verifies a secp256k1 ECDSA signature over
+    // Poseidon2::hash([credential_hash, user_pubkey_hash, expiry], 3), so the
+    // issuer key is a secp256k1 private scalar. The public key (x || y) is
+    // derived here so it always matches the private key.
+    if (!privHex || privHex.length !== 64) {
+      throw new Error('ISSUER_PRIVATE_KEY must be a 32-byte secp256k1 hex string (64 chars)');
     }
 
     this.issuerPrivateKey = Buffer.from(privHex, 'hex');
-    this.issuerPublicKey = Buffer.from(pubHex, 'hex');
+    // Uncompressed point (0x04 || x || y) -> strip the 0x04 prefix.
+    const publicKey = secp256k1.getPublicKey(this.issuerPrivateKey, false);
+    this.issuerPublicKey = Buffer.from(publicKey.subarray(1));
   }
 
   async issue(dto: IssueCredentialDto): Promise<CredentialResponse> {
@@ -81,15 +80,17 @@ export class CredentialService {
     const corridorIdField = BigInt('0x' + Buffer.from(dto.corridorId, 'utf-8').toString('hex'));
     const corridorIdStr = this.poseidonService.fieldToHex32(corridorIdField);
 
-    // The circuit signs Poseidon2::hash([credential_hash, user_pubkey_hash,
-    // credential_expiry], 3) over secp256k1. Signature migration to secp256k1
-    // lands in a follow-up commit; keep issuing deterministic credentials.
-    const message = Buffer.concat([
-      this.poseidonService.fieldToBytes32(credentialHash),
-      this.poseidonService.fieldToBytes32(userPubkeyHash),
-      this.bigIntToBytes64(expiryBigInt),
+    // The circuit (main.nr) verifies the issuer's secp256k1 ECDSA signature
+    // over credential_msg = Poseidon2::hash([credential_hash,
+    // user_pubkey_hash, credential_expiry], 3), encoded as 32 bytes
+    // big-endian. Sign that exact message.
+    const credentialMsg = this.poseidonService.poseidon2([
+      credentialHash,
+      userPubkeyHash,
+      expiryBigInt,
     ]);
-    const signature = nacl.sign.detached(message, this.issuerPrivateKey);
+    const message = this.poseidonService.fieldToBytes32(credentialMsg);
+    const signature = secp256k1.sign(message, this.issuerPrivateKey);
     const issuerSignature = '0x' + Buffer.from(signature).toString('hex');
 
     const issuerPubkey = '0x' + this.issuerPublicKey.toString('hex');
@@ -158,11 +159,5 @@ export class CredentialService {
        WHERE credential_hash = $1`,
       [credentialHash]
     );
-  }
-
-  private bigIntToBytes64(n: bigint): Buffer {
-    const buf = Buffer.alloc(8);
-    buf.writeBigUInt64BE(n);
-    return buf;
   }
 }
