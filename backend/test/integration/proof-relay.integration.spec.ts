@@ -27,12 +27,9 @@ jest.mock('@stellar/stellar-sdk', () => {
       status: 'PENDING',
       hash: 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
     }),
-    getTransaction: jest
-      .fn()
-      .mockResolvedValueOnce({
-        status: 'SUCCESS',
-        returnValue: { value: jest.fn().mockReturnValue(true) },
-      }),
+    getTransaction: jest.fn().mockResolvedValue({
+      status: 'NOT_FOUND',
+    }),
   };
 
   const mockContract = {
@@ -65,10 +62,26 @@ jest.mock('@stellar/stellar-sdk', () => {
         publicKey: jest.fn().mockReturnValue('GAXK...'),
       })),
     },
-    TransactionBuilder: {
-      fromXDR: jest.fn(() => ({
-        hash: jest.fn().mockReturnValue(Buffer.from('abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890', 'hex')),
-      })),
+    TransactionBuilder: class {
+      static fromXDR() {
+        return {
+          hash: jest.fn().mockReturnValue(Buffer.from('abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890', 'hex')),
+        };
+      }
+
+      constructor() {}
+
+      addOperation() {
+        return this;
+      }
+
+      setTimeout() {
+        return this;
+      }
+
+      build() {
+        return { sign: jest.fn() };
+      }
     },
     Horizon: {
       Server: jest.fn(),
@@ -219,7 +232,7 @@ describe('ProofService Integration', () => {
       publicInputs: validPublicInputs,
     });
 
-    jest.advanceTimersByTime(31000);
+    await jest.advanceTimersByTimeAsync(31000);
     const result = await relayPromise;
 
     expect(result.verified).toBe(false);
@@ -268,6 +281,16 @@ describe('ProofService Integration', () => {
     jest.spyOn(nullifierService, 'isUsed').mockResolvedValue({
       used: false,
       source: 'fresh',
+    });
+
+    const mockStellarSdk = require('@stellar/stellar-sdk');
+    mockStellarSdk.SorobanRpc.Server().sendTransaction.mockResolvedValue({
+      status: 'PENDING',
+      hash: 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+    });
+    mockStellarSdk.SorobanRpc.Server().getTransaction.mockResolvedValue({
+      status: 'SUCCESS',
+      returnValue: { value: jest.fn().mockReturnValue(true) },
     });
 
     const result = await proofService.relay({
