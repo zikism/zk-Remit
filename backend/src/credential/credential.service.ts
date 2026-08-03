@@ -54,8 +54,12 @@ export class CredentialService {
       throw new Error(`Unsupported corridor: ${dto.corridorId}`);
     }
 
-    const credentialSecretBytes = randomBytes(32);
-    const credentialSecret = '0x' + credentialSecretBytes.toString('hex');
+    // 31 random bytes keeps the credential secret below the BN254 field
+    // modulus (254 bits), so the circuit can use it as a Field input. A full
+    // 32-byte random value exceeds the modulus ~75% of the time and would be
+    // rejected by noir's witness builder.
+    const credentialSecretBytes = randomBytes(31);
+    const credentialSecret = '0x00' + credentialSecretBytes.toString('hex');
 
     // Circuit-consistent Poseidon2 over the user identity bytes (chunked so
     // each field fits below the BN254 modulus).
@@ -67,7 +71,7 @@ export class CredentialService {
     const expirySec = Math.floor(Date.now() / 1000) + 90 * 24 * 60 * 60;
     const expiryBigInt = BigInt(expirySec);
 
-    const credentialSecretField = BigInt('0x' + credentialSecretBytes.toString('hex'));
+    const credentialSecretField = BigInt('0x00' + credentialSecretBytes.toString('hex'));
     const credentialHash = this.poseidonService.poseidon2([
       credentialSecretField,
       userPubkeyHash,

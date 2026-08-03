@@ -4,6 +4,9 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { CredentialService } from './credential.service';
 import { IssueCredentialDto } from './dto/issue-credential.dto';
 import { PoseidonService } from '../hash/poseidon.service';
+import { Fr } from '@aztec/bb.js';
+
+const FrModulus = (): bigint => Fr.MODULUS;
 
 jest.mock('../db/client', () => ({
   getPool: jest.fn(() => ({
@@ -120,6 +123,22 @@ describe('CredentialService', () => {
     expect(secp256k1.verify(sig, msg, pub, { prehash: false })).toBe(true);
     // prehash:true (v2 default) would sign SHA256(msg) instead -> must NOT verify.
     expect(secp256k1.verify(sig, msg, pub)).toBe(false);
+  });
+
+  it('should issue a credential secret that is a valid BN254 field element', async () => {
+    const dto: IssueCredentialDto = {
+      walletAddress: 'GAXK2SOZ2RI4ZJ6ZYVJXL6QY7YV5Z7G7Y6Y7Y6Y7Y6Y7Y6Y7Y6Y7Y6Y7',
+      kycProvider: 'mock-issuer',
+      corridorId: 'NG-PH',
+    };
+
+    const response = await service.issue(dto);
+    const secretField = BigInt(response.credentialSecret);
+    // A full 32-byte random value exceeds the modulus ~75% of the time and
+    // would be rejected by the circuit's witness builder, so the issued
+    // secret must always be a canonical field element.
+    expect(secretField).toBeLessThan(FrModulus());
+    expect(response.credentialSecret).toMatch(/^0x[0-9a-f]{64}$/);
   });
 
   it('should throw for unsupported corridor', async () => {
