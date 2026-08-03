@@ -55,7 +55,7 @@ jobs:
         run: cargo build --target wasm32-unknown-unknown --release
       - name: Run contract tests
         working-directory: contracts/verifier
-        run: cargo test
+        run: cargo test --features testutils
 
   backend:
     runs-on: ubuntu-latest

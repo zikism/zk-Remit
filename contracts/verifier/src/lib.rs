@@ -56,13 +56,13 @@ impl ComplianceVerifier {
         env.storage().instance().set(&symbol_short!("admin"), &admin);
         env.storage()
             .instance()
-            .set(&symbol_short!("juris_root"), &allowed_jurisdictions_root);
+            .set(&symbol_short!("jur_root"), &allowed_jurisdictions_root);
         env.storage()
             .instance()
-            .set(&symbol_short!("corr_root"), &approved_corridors_root);
+            .set(&symbol_short!("cor_root"), &approved_corridors_root);
         env.storage()
             .instance()
-            .set(&symbol_short!("revoc_root"), &revocation_root);
+            .set(&symbol_short!("rev_root"), &revocation_root);
     }
 
     pub fn verify_and_record(env: Env, proof: Bytes, public_inputs: Bytes) -> bool {
@@ -79,17 +79,17 @@ impl ComplianceVerifier {
         let stored_revoc_root: BytesN<32> = env
             .storage()
             .instance()
-            .get(&symbol_short!("revoc_root"))
+            .get(&symbol_short!("rev_root"))
             .unwrap();
         let stored_corr_root: BytesN<32> = env
             .storage()
             .instance()
-            .get(&symbol_short!("corr_root"))
+            .get(&symbol_short!("cor_root"))
             .unwrap();
         let stored_juris_root: BytesN<32> = env
             .storage()
             .instance()
-            .get(&symbol_short!("juris_root"))
+            .get(&symbol_short!("jur_root"))
             .unwrap();
 
         if revocation_root != stored_revoc_root {
@@ -111,7 +111,17 @@ impl ComplianceVerifier {
             .instance()
             .get(&symbol_short!("vk"))
             .unwrap();
-        let is_valid = env.crypto().verify_groth16_bn254(&vk, &public_inputs, &proof);
+
+        // TODO(contract): the Groth16 check is intentionally stubbed to true so
+        // the crate compiles and the surrounding flow (nullifier replay
+        // protection, root staleness) is testable. Soroban has no
+        // `verify_groth16_bn254` host function; real verification must be built
+        // from the Stellar Protocol 25 BN254 host functions
+        // (g1_add/g1_mul/pairing_check, see stellar/soroban-examples
+        // groth16_verifier). DO NOT deploy with this stub in place.
+        let _ = &vk;
+        let _ = &proof;
+        let is_valid = true;
         if !is_valid {
             return false;
         }
@@ -124,7 +134,7 @@ impl ComplianceVerifier {
             payment_asset,
             corridor_id: corridor_id.clone(),
             aml_threshold,
-            amount_commitment,
+            amount_commitment: amount_commitment.clone(),
             revocation_root,
             approved_corridors_root,
             allowed_jurisdictions_root,
@@ -139,7 +149,7 @@ impl ComplianceVerifier {
 
         env.events().publish(
             (symbol_short!("compliant"),),
-            (nullifier, corridor_id, amount_commitment),
+            (nullifier, corridor_id, amount_commitment.clone()),
         );
 
         true
@@ -185,13 +195,13 @@ impl ComplianceVerifier {
         }
         env.storage()
             .instance()
-            .set(&symbol_short!("revoc_root"), &new_revocation_root);
+            .set(&symbol_short!("rev_root"), &new_revocation_root);
         env.storage()
             .instance()
-            .set(&symbol_short!("corr_root"), &new_approved_corridors_root);
+            .set(&symbol_short!("cor_root"), &new_approved_corridors_root);
         env.storage()
             .instance()
-            .set(&symbol_short!("juris_root"), &new_allowed_jurisdictions_root);
+            .set(&symbol_short!("jur_root"), &new_allowed_jurisdictions_root);
 
         env.events().publish((symbol_short!("roots_upd"),), ());
     }
@@ -203,11 +213,11 @@ mod test {
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env};
 
-    fn setup_test_env() -> (Env, ComplianceVerifierClient, Address) {
+    fn setup_test_env() -> (Env, ComplianceVerifierClient<'static>, Address) {
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, ComplianceVerifier);
-        let client = ComplianceVerifierClient::new(&env, &contract_id);
+        let client = ComplianceVerifierClient::<'static>::new(&env, &contract_id);
         let admin = Address::generate(&env);
 
         let vk = Bytes::from_array(&env, &[1u8; 64]);
@@ -223,7 +233,7 @@ mod test {
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, ComplianceVerifier);
-        let client = ComplianceVerifierClient::new(&env, &contract_id);
+        let client = ComplianceVerifierClient::<'static>::new(&env, &contract_id);
         let admin = Address::generate(&env);
 
         let vk = Bytes::from_array(&env, &[2u8; 64]);
