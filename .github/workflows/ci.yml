@@ -13,10 +13,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install noirup
         run: curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
-      - name: Install nargo
+      - name: Install nargo (0.36.0)
         run: |
           export PATH="$HOME/.noirup/bin:$PATH"
-          noirup
+          noirup -v 0.36.0
       - name: Install bbup
         run: curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/bbup/install | bash
       - name: Install bb
