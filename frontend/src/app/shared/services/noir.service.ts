@@ -1,7 +1,6 @@
 import { Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Subject, lastValueFrom } from 'rxjs';
-import { poseidon2 } from 'poseidon-lite';
 
 export interface ProofProgress {
   stage: 'idle' | 'loading' | 'witness' | 'proof' | 'done' | 'error';
@@ -14,15 +13,17 @@ export interface CircuitInputs {
   credential_secret: string;
   credential_hash: string;
   issuer_signature: number[];
-  issuer_pubkey: number[];
+  issuer_pubkey_x: number[];
+  issuer_pubkey_y: number[];
   user_pubkey_hash: string;
   amount: number;
   jurisdiction_code: number;
   credential_expiry: number;
   current_timestamp: number;
   allowed_jurisdictions_path: string[];
-  allowed_jurisdictions_indices: number[];
+  allowed_jurisdictions_index: string;
   amount_blinding: string;
+  revocation_candidate_leaf: string;
   revocation_path: string[];
   revocation_indices: number[];
   approved_corridors_path: string[];
@@ -198,10 +199,5 @@ export class NoirService {
         circuitJson,
       });
     });
-  }
-
-  computeNullifier(credentialSecret: string, corridorId: string): string {
-    const hash = poseidon2([credentialSecret, corridorId]);
-    return '0x' + hash.toString(16).padStart(64, '0');
   }
 }

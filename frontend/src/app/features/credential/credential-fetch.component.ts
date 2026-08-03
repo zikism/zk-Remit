@@ -7,7 +7,7 @@ import {
 } from '../../shared/services/credential.service';
 
 export interface Credential extends CredentialResponse {
-  corridorId: string;
+  corridorLabel: string;
 }
 
 const CORRIDORS = [
@@ -102,7 +102,7 @@ const CORRIDORS = [
           </p>
           <div class="mt-3 grid grid-cols-1 gap-2 text-xs text-gray-400 md:grid-cols-2">
             <span>Issuer: mock-issuer</span>
-            <span>Corridor: {{ c.corridorId }}</span>
+            <span>Corridor: {{ c.corridorLabel }}</span>
             <span>Jurisdiction: {{ c.jurisdictionCode }}</span>
             <span>Credential: {{ c.credentialHash.slice(0, 10) }}...</span>
           </div>
@@ -146,7 +146,7 @@ export class CredentialFetchComponent {
 
       const credential: Credential = {
         ...res,
-        corridorId: this.selectedCorridor,
+        corridorLabel: this.selectedCorridor,
       };
 
       this.credential.set(credential);

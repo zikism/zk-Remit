@@ -194,7 +194,7 @@ export class SendPageComponent {
 
   onCredentialFetched(c: Credential): void {
     this.credential.set(c);
-    this.selectedCorridor.set(c.corridorId);
+    this.selectedCorridor.set(c.corridorLabel);
     this.currentStep.set(3);
   }
 

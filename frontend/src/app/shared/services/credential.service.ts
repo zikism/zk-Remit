@@ -10,6 +10,8 @@ export interface CredentialResponse {
   expiry: number;
   jurisdictionCode: number;
   credentialSecret: string;
+  userPubkeyHash: string;
+  corridorId: string;
 }
 
 export interface IssuerInfo {
@@ -22,6 +24,22 @@ export interface MerkleRoots {
   jurisdictionRoot: string;
   corridorRoot: string;
   revocationRoot: string;
+}
+
+export interface JurisdictionPath {
+  index: string;
+  path: string[];
+}
+
+export interface CorridorPath {
+  indices: number[];
+  path: string[];
+}
+
+export interface RevocationPath {
+  leaf: string;
+  indices: number[];
+  path: string[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -71,5 +89,27 @@ export class CredentialService {
       corridorRoot: corridorRoot.root,
       revocationRoot: revocationRoot.root,
     };
+  }
+
+  async getJurisdictionPath(code: number): Promise<JurisdictionPath> {
+    return lastValueFrom(
+      this.http.get<JurisdictionPath>(
+        `${environment.apiUrl}/merkle/jurisdiction-path/${code}`
+      )
+    );
+  }
+
+  async getCorridorPath(corridorId: string): Promise<CorridorPath> {
+    return lastValueFrom(
+      this.http.get<CorridorPath>(
+        `${environment.apiUrl}/merkle/corridor-path/${encodeURIComponent(corridorId)}`
+      )
+    );
+  }
+
+  async getRevocationPath(): Promise<RevocationPath> {
+    return lastValueFrom(
+      this.http.get<RevocationPath>(`${environment.apiUrl}/merkle/revocation-path`)
+    );
   }
 }

@@ -21,6 +21,7 @@
     "useDefineForClassFields": false,
     "lib": ["ES2022", "dom"]
   },
+  "exclude": ["node_modules", "playwright.config.ts", "dist", "test", "e2e"],
   "angularCompilerOptions": {
     "enableI18nLegacyMessageIdFormat": false,
     "strictInjectionParameters": true,

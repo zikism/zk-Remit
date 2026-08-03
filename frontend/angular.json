@@ -22,7 +22,6 @@
             "scripts": [],
             "externalDependencies": ["@aztec/bb.js"],
             "allowedCommonJsDependencies": [
-              "poseidon-lite",
               "@stellar/freighter-api"
             ]
           },

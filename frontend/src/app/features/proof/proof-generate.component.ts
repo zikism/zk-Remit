@@ -7,6 +7,7 @@ import {
   CircuitInputs,
 } from '../../shared/services/noir.service';
 import { CredentialService } from '../../shared/services/credential.service';
+import { PoseidonService } from '../../shared/services/poseidon.service';
 import { Credential } from '../credential/credential-fetch.component';
 import { ProofStatusComponent } from '../../shared/components/proof-status/proof-status.component';
 
@@ -153,7 +154,8 @@ export class ProofGenerateComponent implements OnDestroy {
 
   constructor(
     public noirService: NoirService,
-    private credentialService: CredentialService
+    private credentialService: CredentialService,
+    private poseidonService: PoseidonService
   ) {}
 
   ngOnDestroy(): void {
@@ -165,6 +167,14 @@ export class ProofGenerateComponent implements OnDestroy {
       clearInterval(this.elapsedTimer);
       this.elapsedTimer = null;
     }
+  }
+
+  private randomHexBytes(count: number): string {
+    const bytes = new Uint8Array(count);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
   }
 
   pillClass(stage: string): Record<string, boolean> {
@@ -207,35 +217,55 @@ export class ProofGenerateComponent implements OnDestroy {
     try {
       const merkleRoots = await this.credentialService.getMerkleRoots();
 
-      const nullifier = this.noirService.computeNullifier(
-        this.credential.credentialSecret,
-        this.corridorId
+      const [jurisdictionPath, corridorPath, revocationPath] = await Promise.all([
+        this.credentialService.getJurisdictionPath(this.credential.jurisdictionCode),
+        this.credentialService.getCorridorPath(this.credential.corridorLabel),
+        this.credentialService.getRevocationPath(),
+      ]);
+
+      const pubkeyBytes = hexToBytes(this.credential.issuerPubkey);
+      const issuerPubkeyX = pubkeyBytes.slice(0, 32);
+      const issuerPubkeyY = pubkeyBytes.slice(32, 64);
+
+      const secretField = BigInt(this.credential.credentialSecret);
+      const corridorField = BigInt(this.credential.corridorId);
+
+      const issuerPubkeyHash = await this.poseidonService.issuerPubkeyHash(pubkeyBytes);
+      const nullifier = await this.poseidonService.nullifier(secretField, corridorField);
+
+      const blinding = BigInt('0x' + this.randomHexBytes(32));
+      const amountCommitment = await this.poseidonService.amountCommitment(
+        this.amount,
+        blinding
       );
 
       const inputs: CircuitInputs = {
         credential_secret: this.credential.credentialSecret,
         credential_hash: this.credential.credentialHash,
         issuer_signature: hexToBytes(this.credential.issuerSignature),
-        issuer_pubkey: hexToBytes(this.credential.issuerPubkey),
-        user_pubkey_hash: this.credential.credentialHash,
+        issuer_pubkey_x: issuerPubkeyX,
+        issuer_pubkey_y: issuerPubkeyY,
+        user_pubkey_hash: this.credential.userPubkeyHash,
         amount: this.amount,
         jurisdiction_code: this.credential.jurisdictionCode,
         credential_expiry: this.credential.expiry,
         current_timestamp: Math.floor(Date.now() / 1000),
-        allowed_jurisdictions_path: [],
-        allowed_jurisdictions_indices: [],
-        amount_blinding: '0',
-        revocation_path: [],
-        revocation_indices: [],
-        approved_corridors_path: [],
-        approved_corridors_indices: [],
+        allowed_jurisdictions_path: jurisdictionPath.path,
+        allowed_jurisdictions_index:
+          '0x' + BigInt(jurisdictionPath.index).toString(16),
+        amount_blinding: this.poseidonService.fieldToHex32(blinding),
+        revocation_candidate_leaf: revocationPath.leaf,
+        revocation_path: revocationPath.path,
+        revocation_indices: revocationPath.indices,
+        approved_corridors_path: corridorPath.path,
+        approved_corridors_indices: corridorPath.indices,
         nullifier,
-        issuer_pubkey_hash: '0x00',
+        issuer_pubkey_hash: issuerPubkeyHash,
         payment_asset: '0x00',
         aml_threshold: 10000,
-        corridor_id: '0x00',
+        corridor_id: this.credential.corridorId,
         allowed_jurisdictions_root: merkleRoots.jurisdictionRoot,
-        amount_commitment: '0x00',
+        amount_commitment: amountCommitment,
         revocation_root: merkleRoots.revocationRoot,
         approved_corridors_root: merkleRoots.corridorRoot,
       };
