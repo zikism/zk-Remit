@@ -75,13 +75,16 @@ export class NullifierService {
 
       const server = new SorobanRpc.Server(this.stellarRpcUrl);
       const nullifierBytes = Buffer.from(nullifier.slice(2), 'hex');
-
-      const scVal = xdr.ScVal.scvBytes(nullifierBytes);
+      const key = xdr.ScVal.scvBytes(nullifierBytes);
 
       this.logger.debug('Querying Soroban contract for nullifier: ' + nullifier.slice(0, 18) + '...');
 
-      return false;
+      const entry = await server.getContractData(this.verifierContractId, key);
+      return entry !== null && entry !== undefined;
     } catch (err: any) {
+      if (err?.code === 404) {
+        return false;
+      }
       this.logger.error(`On-chain nullifier check failed: ${err.message}`);
       return false;
     }

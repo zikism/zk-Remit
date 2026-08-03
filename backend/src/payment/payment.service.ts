@@ -24,6 +24,10 @@ export class PaymentService {
   }
 
   async send(dto: SendPaymentDto): Promise<SendPaymentResult> {
+    if (!this.nullifierService.isValidFormat(dto.nullifier)) {
+      throw new BadRequestException('Invalid nullifier format — must be a 66-char hex string starting with 0x');
+    }
+
     const pool = getPool();
 
     const { rows } = await pool.query(
@@ -34,21 +38,58 @@ export class PaymentService {
       throw new BadRequestException('Proof not verified — cannot send payment');
     }
 
+    const { rows: spentRows } = await pool.query(
+      'SELECT 1 FROM payments WHERE nullifier = $1 LIMIT 1',
+      [dto.nullifier]
+    );
+    if (spentRows.length > 0) {
+      throw new BadRequestException('Nullifier already used for a payment');
+    }
+
+    const { TransactionBuilder } = await import('@stellar/stellar-sdk');
+
+    let transaction = TransactionBuilder.fromXDR(dto.signedXdr, this.stellarPassphrase);
+    if ('innerTransaction' in transaction) {
+      transaction = transaction.innerTransaction;
+    }
+
+    const paymentOp = transaction.operations.find((op: any) => op.type === 'payment') as any;
+    if (!paymentOp) {
+      throw new BadRequestException('Transaction must contain a payment operation');
+    }
+
+    const fromAddress = transaction.source;
+    const toAddress = typeof paymentOp.to === 'string'
+      ? paymentOp.to
+      : paymentOp.to.accountId();
+    const asset = paymentOp.asset;
+    const assetCode = asset.isNative() ? 'XLM' : asset.getCode();
+    const assetIssuer = asset.isNative() ? null : asset.getIssuer();
+    const txHash = transaction.hash().toString('hex');
+
     try {
-      const { TransactionBuilder, Horizon } = await import('@stellar/stellar-sdk');
+      const { Horizon } = await import('@stellar/stellar-sdk');
 
       const server = new Horizon.Server(this.horizonUrl);
-      const transaction = TransactionBuilder.fromXDR(dto.signedXdr, this.stellarPassphrase);
-      const txHash = transaction.hash().toString('hex');
 
       const submitResult = await server.submitTransaction(transaction);
 
       const ledger = submitResult.ledger;
 
       await pool.query(
-        `INSERT INTO payments (nullifier, from_address, to_address, amount, asset_code, corridor_id, stellar_tx_hash, ledger)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [dto.nullifier, '', '', '', '', rows[0].corridor_id ?? '', txHash, ledger]
+        `INSERT INTO payments (nullifier, from_address, to_address, amount, asset_code, asset_issuer, corridor_id, stellar_tx_hash, ledger)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          dto.nullifier,
+          fromAddress,
+          toAddress,
+          paymentOp.amount,
+          assetCode,
+          assetIssuer,
+          rows[0].corridor_id ?? '',
+          txHash,
+          ledger,
+        ]
       );
 
       return { success: true, txHash, ledger };
