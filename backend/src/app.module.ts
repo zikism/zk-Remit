@@ -8,6 +8,7 @@ import { NullifierModule } from './nullifier/nullifier.module';
 import { HashModule } from './hash/hash.module';
 import { MerkleModule } from './merkle/merkle.module';
 import { ComplianceModule } from './compliance/compliance.module';
+import { RootRotationModule } from './root-rotation/root-rotation.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { ComplianceModule } from './compliance/compliance.module';
     HashModule,
     MerkleModule,
     ComplianceModule,
+    RootRotationModule,
   ],
 })
 export class AppModule {}

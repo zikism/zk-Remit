@@ -7,5 +7,6 @@ import { MerkleController } from './merkle.controller';
   imports: [HashModule],
   providers: [MerkleService],
   controllers: [MerkleController],
+  exports: [MerkleService],
 })
 export class MerkleModule {}
