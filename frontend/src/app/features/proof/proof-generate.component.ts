@@ -217,6 +217,18 @@ export class ProofGenerateComponent implements OnDestroy {
     try {
       const merkleRoots = await this.credentialService.getMerkleRoots();
 
+      // The corridor's configured AML threshold is the single source of truth
+      // (backend compliance config). The circuit only proves amount <
+      // aml_threshold and the on-chain verifier pins aml_threshold to the
+      // corridor's configured value, so a proof must use the same threshold
+      // the contract enforces or it will be rejected after relay.
+      const config = await this.credentialService.getCorridorConfig(this.corridorId);
+      if (this.amount >= config.amlThreshold) {
+        throw new Error(
+          `Amount ${this.amount} exceeds the ${this.corridorId} AML threshold of ${config.amlThreshold}`
+        );
+      }
+
       const [jurisdictionPath, corridorPath, revocationPath] = await Promise.all([
         this.credentialService.getJurisdictionPath(this.credential.jurisdictionCode),
         this.credentialService.getCorridorPath(this.credential.corridorLabel),
@@ -262,7 +274,7 @@ export class ProofGenerateComponent implements OnDestroy {
         nullifier,
         issuer_pubkey_hash: issuerPubkeyHash,
         payment_asset: '0x00',
-        aml_threshold: 10000,
+        aml_threshold: config.amlThreshold,
         corridor_id: this.credential.corridorId,
         allowed_jurisdictions_root: merkleRoots.jurisdictionRoot,
         amount_commitment: amountCommitment,

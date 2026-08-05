@@ -42,6 +42,14 @@ export interface RevocationPath {
   path: string[];
 }
 
+export interface CorridorConfig {
+  corridorId: string;
+  senderJurisdiction: number;
+  amlThreshold: number;
+  paymentAsset: string;
+  maxAmount: number;
+}
+
 @Injectable({ providedIn: 'root' })
 export class CredentialService {
   constructor(private http: HttpClient) {}
@@ -110,6 +118,14 @@ export class CredentialService {
   async getRevocationPath(): Promise<RevocationPath> {
     return lastValueFrom(
       this.http.get<RevocationPath>(`${environment.apiUrl}/merkle/revocation-path`)
+    );
+  }
+
+  async getCorridorConfig(corridorId: string): Promise<CorridorConfig> {
+    return lastValueFrom(
+      this.http.get<CorridorConfig>(
+        `${environment.apiUrl}/compliance/corridors/${encodeURIComponent(corridorId)}`
+      )
     );
   }
 }
