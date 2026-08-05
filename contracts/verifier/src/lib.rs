@@ -102,6 +102,21 @@ impl ComplianceVerifier {
             return false;
         }
 
+        // The circuit only proves `amount < aml_threshold`; `aml_threshold` is
+        // a public input the prover controls, so a proof can claim any limit
+        // it likes. Pin it to the configured threshold for the proven corridor
+        // so the effective per-corridor AML limit is enforced on-chain. An
+        // unconfigured corridor defaults to 0, which no amount can satisfy
+        // in-circuit, so its proofs are rejected here regardless.
+        let configured_threshold: u64 = env
+            .storage()
+            .persistent()
+            .get(&Self::corridor_threshold_key(&env, &corridor_id))
+            .unwrap_or(0);
+        if aml_threshold != configured_threshold {
+            return false;
+        }
+
         if env.storage().persistent().has(&nullifier) {
             return false;
         }
@@ -159,6 +174,46 @@ impl ComplianceVerifier {
         env.storage().persistent().has(&nullifier)
     }
 
+    fn corridor_threshold_key(env: &Env, corridor_id: &BytesN<32>) -> BytesN<33> {
+        let mut key = [0u8; 33];
+        key[0] = 0x02;
+        key[1..33].copy_from_slice(&corridor_id.to_array());
+        BytesN::<33>::from_array(env, &key)
+    }
+
+    /// Admin-only: set the maximum amount (exclusive) allowed per corridor.
+    /// `verify_and_record` rejects any proof whose `aml_threshold` public input
+    /// does not equal this value, so the per-corridor AML limit is enforceable
+    /// on-chain even though the Groth16 check is stubbed.
+    pub fn set_aml_threshold(
+        env: Env,
+        caller: Address,
+        corridor_id: BytesN<32>,
+        threshold: u64,
+    ) {
+        caller.require_auth();
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("admin"))
+            .unwrap();
+        if caller != admin {
+            panic!("Caller is not admin");
+        }
+        env.storage()
+            .persistent()
+            .set(&Self::corridor_threshold_key(&env, &corridor_id), &threshold);
+        env.events()
+            .publish((symbol_short!("aml_thrsh"),), (corridor_id, threshold));
+    }
+
+    pub fn get_aml_threshold(env: Env, corridor_id: BytesN<32>) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&Self::corridor_threshold_key(&env, &corridor_id))
+            .unwrap_or(0)
+    }
+
     pub fn get_compliance_record(
         env: Env,
         nullifier: BytesN<32>,
@@ -209,6 +264,7 @@ impl ComplianceVerifier {
 
 #[cfg(test)]
 mod test {
+    extern crate std;
     use super::*;
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env};
@@ -325,5 +381,63 @@ mod test {
 
         let rec = record.unwrap();
         assert_eq!(rec.aml_threshold, 0);
+    }
+
+    fn corridor_bytes_n(env: &Env, value: u8) -> BytesN<32> {
+        BytesN::<32>::from_array(env, &[value; 32])
+    }
+
+    fn pi_with_threshold(env: &Env, corridor_id: &BytesN<32>, threshold: u64) -> Bytes {
+        let mut pi_bytes = [0u8; 264];
+        pi_bytes[104..136].copy_from_slice(&corridor_id.to_array());
+        pi_bytes[96..104].copy_from_slice(&threshold.to_be_bytes());
+        Bytes::from_array(env, &pi_bytes)
+    }
+
+    #[test]
+    fn test_aml_threshold_is_pinned_to_configured_corridor_threshold() {
+        let (_env, client, admin) = setup_test_env();
+
+        let corridor_id = corridor_bytes_n(&_env, 0xAB);
+        client.set_aml_threshold(&admin, &corridor_id, &10_000);
+
+        assert_eq!(client.get_aml_threshold(&corridor_id), 10_000);
+
+        // Matching threshold passes (roots are the zero roots from setup).
+        let proof = Bytes::from_array(&_env, &[0u8; 128]);
+        let pi_ok = pi_with_threshold(&_env, &corridor_id, 10_000);
+        assert!(client.verify_and_record(&proof, &pi_ok));
+
+        // Same corridor with a different aml_threshold must be rejected,
+        // otherwise a prover could claim any limit (e.g. u64::MAX).
+        let pi_wrong = pi_with_threshold(&_env, &corridor_id, 9_999);
+        assert!(!client.verify_and_record(&proof, &pi_wrong));
+    }
+
+    #[test]
+    fn test_unconfigured_corridor_rejected() {
+        let (_env, client, _admin) = setup_test_env();
+
+        let proof = Bytes::from_array(&_env, &[0u8; 128]);
+        // Corridor not configured, so its effective threshold is 0. A nonzero
+        // claim must be rejected (and no amount can satisfy threshold 0).
+        let corridor_id = corridor_bytes_n(&_env, 0xCD);
+        assert_eq!(client.get_aml_threshold(&corridor_id), 0);
+        let pi = pi_with_threshold(&_env, &corridor_id, 10_000);
+        assert!(!client.verify_and_record(&proof, &pi));
+    }
+
+    #[test]
+    fn test_set_aml_threshold_requires_admin() {
+        let (env, client, _admin) = setup_test_env();
+
+        let attacker = Address::generate(&env);
+        env.mock_all_auths();
+        let corridor_id = corridor_bytes_n(&env, 0xAB);
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.set_aml_threshold(&attacker, &corridor_id, &100);
+        }));
+        assert!(result.is_err());
     }
 }
