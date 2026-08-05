@@ -7,6 +7,7 @@ import { PaymentModule } from './payment/payment.module';
 import { NullifierModule } from './nullifier/nullifier.module';
 import { HashModule } from './hash/hash.module';
 import { MerkleModule } from './merkle/merkle.module';
+import { ComplianceModule } from './compliance/compliance.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { MerkleModule } from './merkle/merkle.module';
     NullifierModule,
     HashModule,
     MerkleModule,
+    ComplianceModule,
   ],
 })
 export class AppModule {}

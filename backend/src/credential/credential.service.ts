@@ -4,14 +4,8 @@ import { randomBytes } from 'crypto';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { getPool } from '../db/client';
 import { PoseidonService } from '../hash/poseidon.service';
+import { corridorConfig } from '../compliance/compliance.config';
 import { IssueCredentialDto, CredentialResponse, IssuerResponse } from './dto/issue-credential.dto';
-
-const CORRIDOR_MAP: Record<string, { senderJurisdiction: number }> = {
-  'NG-PH': { senderJurisdiction: 566 },
-  'NG-GB': { senderJurisdiction: 566 },
-  'GH-US': { senderJurisdiction: 288 },
-  'KE-DE': { senderJurisdiction: 404 },
-};
 
 const ISSUERS: IssuerResponse[] = [
   {
@@ -49,10 +43,7 @@ export class CredentialService {
   async issue(dto: IssueCredentialDto): Promise<CredentialResponse> {
     const pool = getPool();
 
-    const corridorInfo = CORRIDOR_MAP[dto.corridorId];
-    if (!corridorInfo) {
-      throw new Error(`Unsupported corridor: ${dto.corridorId}`);
-    }
+    const corridorInfo = corridorConfig(dto.corridorId);
 
     // 31 random bytes keeps the credential secret below the BN254 field
     // modulus (254 bits), so the circuit can use it as a Field input. A full

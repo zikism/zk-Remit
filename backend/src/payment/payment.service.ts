@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { getPool } from '../db/client';
 import { NullifierService } from '../nullifier/nullifier.service';
+import { CORRIDOR_MAP } from '../compliance/compliance.config';
 import {
   SendPaymentDto,
   BuildPaymentDto,
@@ -154,50 +155,19 @@ export class PaymentService {
   }
 
   async getSep31AnchorInfo(corridorId: string): Promise<Sep31AnchorInfo> {
-    const corridorMap: Record<string, Sep31AnchorInfo> = {
-      'NG-PH': {
-        anchorUrl: 'https://anchor.example.com',
-        assetCode: 'USDC',
-        minAmount: '1',
-        maxAmount: '10000',
-        fields: {
-          sender: { name: 'required', email: 'optional' },
-        },
-      },
-      'NG-GB': {
-        anchorUrl: 'https://anchor.example.com',
-        assetCode: 'USDC',
-        minAmount: '1',
-        maxAmount: '10000',
-        fields: {
-          sender: { name: 'required', email: 'optional' },
-        },
-      },
-      'GH-US': {
-        anchorUrl: 'https://anchor.example.com',
-        assetCode: 'USDC',
-        minAmount: '1',
-        maxAmount: '5000',
-        fields: {
-          sender: { name: 'required', email: 'optional' },
-        },
-      },
-      'KE-DE': {
-        anchorUrl: 'https://anchor.example.com',
-        assetCode: 'USDC',
-        minAmount: '1',
-        maxAmount: '5000',
-        fields: {
-          sender: { name: 'required', email: 'optional' },
-        },
-      },
-    };
-
-    const info = corridorMap[corridorId];
-    if (!info) {
+    const corridor = CORRIDOR_MAP[corridorId];
+    if (!corridor) {
       throw new BadRequestException(`Unsupported corridor: ${corridorId}`);
     }
 
-    return info;
+    return {
+      anchorUrl: 'https://anchor.example.com',
+      assetCode: 'USDC',
+      minAmount: '1',
+      maxAmount: String(corridor.maxAmount),
+      fields: {
+        sender: { name: 'required', email: 'optional' },
+      },
+    };
   }
 }

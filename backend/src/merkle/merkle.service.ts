@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { getPool } from '../db/client';
 import { PoseidonService } from '../hash/poseidon.service';
+import { APPROVED_CORRIDORS, JURISDICTION_CODES } from '../compliance/compliance.config';
 
 // Jurisdiction tree: a fixed 16-leaf binary tree (the circuit's
 // `build_merkle_path_and_root`) followed by six zero-padding levels, for a
@@ -22,14 +23,6 @@ const CORRIDOR_PATH_LEVELS = 8;
 // Revocation tree: same depth-10 sparse-collapse construction over the
 // credential hashes of revoked credentials.
 const REVOCATION_TREE_DEPTH = 10;
-
-// Eligible sending jurisdictions (the four supported corridors' source
-// countries), sorted ascending. Leaf values are `Poseidon2::hash([code], 1)`.
-const JURISDICTION_CODES = [288, 404, 566];
-
-// Approved corridors, sorted by their circuit field value (big-endian bytes
-// of the corridor string), so the tree is deterministic.
-const APPROVED_CORRIDORS = ['GH-US', 'KE-DE', 'NG-GB', 'NG-PH'];
 
 export interface JurisdictionPath {
   index: bigint;
