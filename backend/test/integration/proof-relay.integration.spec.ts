@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { ProofService } from '../../src/proof/proof.service';
+import { ProofVerificationService } from '../../src/proof/proof-verification.service';
 import { NullifierService } from '../../src/nullifier/nullifier.service';
 import { RelayProofDto, PublicInputsDto } from '../../src/proof/dto/relay-proof.dto';
 import { BadRequestException } from '@nestjs/common';
@@ -101,12 +102,14 @@ jest.mock('@stellar/stellar-sdk', () => {
 describe('ProofService Integration', () => {
   let proofService: ProofService;
   let nullifierService: NullifierService;
+  let verifierService: ProofVerificationService;
 
   beforeAll(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProofService,
         NullifierService,
+        ProofVerificationService,
         {
           provide: ConfigService,
           useValue: {
@@ -129,6 +132,7 @@ describe('ProofService Integration', () => {
 
     proofService = module.get<ProofService>(ProofService);
     nullifierService = module.get<NullifierService>(NullifierService);
+    verifierService = module.get<ProofVerificationService>(ProofVerificationService);
   });
 
   afterEach(() => {
@@ -147,15 +151,28 @@ describe('ProofService Integration', () => {
     allowed_jurisdictions_root: '0x' + '1'.repeat(64),
   };
 
-  it('should encode public inputs in correct byte order', () => {
+  it('should encode public inputs in circuit byte order', () => {
     const buf = proofService.getPublicInputBytes(validPublicInputs);
     expect(buf.length).toBe(264);
 
-    const nullifierBytes = buf.subarray(0, 32);
-    expect(nullifierBytes.toString('hex')).toBe('a'.repeat(64));
+    const expectField = (start: number, hex: string) => {
+      expect(buf.subarray(start, start + 32).toString('hex')).toBe(hex);
+    };
 
+    // Layout MUST mirror the circuit public params in main.nr:
+    // nullifier, issuer_pubkey_hash, payment_asset, aml_threshold,
+    // corridor_id, allowed_jurisdictions_root, amount_commitment,
+    // revocation_root, approved_corridors_root.
+    expectField(0, 'a'.repeat(64));
+    expectField(32, 'b'.repeat(64));
+    expectField(64, 'c'.repeat(64));
     const amlBytes = buf.subarray(96, 104);
     expect(amlBytes.readBigUInt64BE()).toBe(BigInt(10000));
+    expectField(104, 'd'.repeat(64));
+    expectField(136, '1'.repeat(64));
+    expectField(168, 'e'.repeat(64));
+    expectField(200, 'f'.repeat(64));
+    expectField(232, '0'.repeat(64));
   });
 
   it('should reject nullifier already used locally', async () => {
@@ -172,6 +189,62 @@ describe('ProofService Integration', () => {
     const result = await proofService.relay(dto);
     expect(result.verified).toBe(false);
     expect(result.error).toBe('Nullifier already used');
+  });
+
+  it('should run the off-chain gate when VERIFY_OFFCHAIN is enabled and reject on failure', async () => {
+    jest.spyOn(nullifierService, 'isUsed').mockResolvedValue({
+      used: false,
+      source: 'fresh',
+    });
+    jest.spyOn(verifierService, 'verify').mockResolvedValue({
+      enabled: true,
+      verified: false,
+      error: 'Off-chain verification error: proof rejected',
+    });
+
+    const dto: RelayProofDto = {
+      proof: '0x' + 'ab'.repeat(100),
+      publicInputs: validPublicInputs,
+    };
+
+    const result = await proofService.relay(dto);
+    expect(result.verified).toBe(false);
+    expect(result.error).toBe('Off-chain verification error: proof rejected');
+
+    // No Stellar tx should ever be attempted for a failed proof.
+    const { SorobanRpc } = require('@stellar/stellar-sdk');
+    expect(SorobanRpc.Server().getTransaction).not.toHaveBeenCalled();
+  });
+
+  it('should skip the off-chain gate when VERIFY_OFFCHAIN is disabled', async () => {
+    jest.spyOn(nullifierService, 'isUsed').mockResolvedValue({
+      used: false,
+      source: 'fresh',
+    });
+    jest.spyOn(verifierService, 'verify').mockResolvedValue({
+      enabled: false,
+      verified: false,
+      error: 'Off-chain verification is disabled (VERIFY_OFFCHAIN unset)',
+    });
+
+    const mockStellarSdk = require('@stellar/stellar-sdk');
+    mockStellarSdk.SorobanRpc.Server().sendTransaction.mockResolvedValue({
+      status: 'PENDING',
+      hash: 'abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
+    });
+    mockStellarSdk.SorobanRpc.Server().getTransaction.mockResolvedValue({
+      status: 'SUCCESS',
+      returnValue: { value: jest.fn().mockReturnValue(true) },
+    });
+
+    const dto: RelayProofDto = {
+      proof: '0x' + 'ab'.repeat(100),
+      publicInputs: validPublicInputs,
+    };
+
+    const result = await proofService.relay(dto);
+    expect(result.verified).toBe(true);
+    expect(result.txHash).toBe('abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890');
   });
 
   it('should reject invalid proof format (too short)', async () => {

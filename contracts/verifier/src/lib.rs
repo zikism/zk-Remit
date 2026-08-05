@@ -66,15 +66,21 @@ impl ComplianceVerifier {
     }
 
     pub fn verify_and_record(env: Env, proof: Bytes, public_inputs: Bytes) -> bool {
+        // Offsets MUST match the circuit's public parameter order in main.nr:
+        // nullifier, issuer_pubkey_hash, payment_asset, aml_threshold,
+        // corridor_id, allowed_jurisdictions_root, amount_commitment,
+        // revocation_root, approved_corridors_root. A real verifier binds the
+        // proof's public inputs in this order, so any other offset here would
+        // decode every field past corridor_id as the wrong value.
         let nullifier: BytesN<32> = decode_bytes_n(&env, &public_inputs, 0);
         let issuer_pubkey_hash: BytesN<32> = decode_bytes_n(&env, &public_inputs, 32);
         let payment_asset: BytesN<32> = decode_bytes_n(&env, &public_inputs, 64);
         let aml_threshold: u64 = decode_u64(&public_inputs, 96);
         let corridor_id: BytesN<32> = decode_bytes_n(&env, &public_inputs, 104);
-        let amount_commitment: BytesN<32> = decode_bytes_n(&env, &public_inputs, 136);
-        let revocation_root: BytesN<32> = decode_bytes_n(&env, &public_inputs, 168);
-        let approved_corridors_root: BytesN<32> = decode_bytes_n(&env, &public_inputs, 200);
-        let allowed_jurisdictions_root: BytesN<32> = decode_bytes_n(&env, &public_inputs, 232);
+        let allowed_jurisdictions_root: BytesN<32> = decode_bytes_n(&env, &public_inputs, 136);
+        let amount_commitment: BytesN<32> = decode_bytes_n(&env, &public_inputs, 168);
+        let revocation_root: BytesN<32> = decode_bytes_n(&env, &public_inputs, 200);
+        let approved_corridors_root: BytesN<32> = decode_bytes_n(&env, &public_inputs, 232);
 
         let stored_revoc_root: BytesN<32> = env
             .storage()
@@ -337,8 +343,8 @@ mod test {
 
         let proof = Bytes::from_array(&_env, &[0u8; 128]);
         let mut pi_bytes = [0u8; 264];
-        // Set a different revocation root at offset 168
-        pi_bytes[168] = 0xFF;
+        // Set a different revocation root at offset 200 (circuit order)
+        pi_bytes[200] = 0xFF;
         let pi = Bytes::from_array(&_env, &pi_bytes);
 
         let result = client.verify_and_record(&proof, &pi);
@@ -357,13 +363,89 @@ mod test {
 
         let proof = Bytes::from_array(&_env, &[0u8; 128]);
         let mut pi_bytes = [0u8; 264];
-        pi_bytes[168..200].copy_from_slice(&[0xAAu8; 32]);
-        pi_bytes[200..232].copy_from_slice(&[0xBBu8; 32]);
-        pi_bytes[232..264].copy_from_slice(&[0xCCu8; 32]);
+        // Circuit-order offsets: allowed_jurisdictions_root @136,
+        // revocation_root @200, approved_corridors_root @232.
+        pi_bytes[136..168].copy_from_slice(&[0xCCu8; 32]);
+        pi_bytes[200..232].copy_from_slice(&[0xAAu8; 32]);
+        pi_bytes[232..264].copy_from_slice(&[0xBBu8; 32]);
         let pi = Bytes::from_array(&_env, &pi_bytes);
 
         let result = client.verify_and_record(&proof, &pi);
         assert!(result);
+    }
+
+    #[test]
+    fn test_public_input_decode_matches_circuit_order() {
+        let (_env, client, admin) = setup_test_env();
+
+        let proof = Bytes::from_array(&_env, &[0u8; 128]);
+        let mut pi_bytes = [0u8; 264];
+        // Fill each 32-byte field with a distinct pattern so a decode error
+        // (wrong offset) is detectable; aml_threshold is the 8-byte exception.
+        pi_bytes[0..32].copy_from_slice(&[0x11u8; 32]);
+        pi_bytes[32..64].copy_from_slice(&[0x22u8; 32]);
+        pi_bytes[64..96].copy_from_slice(&[0x33u8; 32]);
+        pi_bytes[96..104].copy_from_slice(&10_000u64.to_be_bytes());
+        pi_bytes[104..136].copy_from_slice(&[0x55u8; 32]);
+        pi_bytes[136..168].copy_from_slice(&[0x66u8; 32]);
+        pi_bytes[168..200].copy_from_slice(&[0x77u8; 32]);
+        pi_bytes[200..232].copy_from_slice(&[0x88u8; 32]);
+        pi_bytes[232..264].copy_from_slice(&[0x99u8; 32]);
+
+        // corridor 0x55..55 is unconfigured, so its effective threshold is 0
+        // and this proof would be rejected by the AML pin. The record is never
+        // stored, so assert on the decode by verifying the pin is reached with
+        // the correct value: set the corridor threshold and then assert the
+        // recorded values round-trip field-for-field.
+        let corridor_id = BytesN::<32>::from_array(&_env, &[0x55u8; 32]);
+        client.set_aml_threshold(&admin, &corridor_id, &10_000);
+
+        // Rotate the stored roots to match the non-zero patterns used below so
+        // the record round-trips field-for-field without tripping the
+        // staleness checks.
+        client.update_roots(
+            &admin,
+            &BytesN::<32>::from_array(&_env, &[0x88u8; 32]),
+            &BytesN::<32>::from_array(&_env, &[0x99u8; 32]),
+            &BytesN::<32>::from_array(&_env, &[0x66u8; 32]),
+        );
+
+        let pi = Bytes::from_array(&_env, &pi_bytes);
+        assert!(client.verify_and_record(&proof, &pi));
+
+        let rec = client
+            .get_compliance_record(&BytesN::<32>::from_array(&_env, &[0x11u8; 32]))
+            .expect("record stored");
+        assert_eq!(rec.nullifier, BytesN::<32>::from_array(&_env, &[0x11u8; 32]));
+        assert_eq!(
+            rec.issuer_pubkey_hash,
+            BytesN::<32>::from_array(&_env, &[0x22u8; 32])
+        );
+        assert_eq!(
+            rec.payment_asset,
+            BytesN::<32>::from_array(&_env, &[0x33u8; 32])
+        );
+        assert_eq!(rec.aml_threshold, 10_000);
+        assert_eq!(
+            rec.corridor_id,
+            BytesN::<32>::from_array(&_env, &[0x55u8; 32])
+        );
+        assert_eq!(
+            rec.allowed_jurisdictions_root,
+            BytesN::<32>::from_array(&_env, &[0x66u8; 32])
+        );
+        assert_eq!(
+            rec.amount_commitment,
+            BytesN::<32>::from_array(&_env, &[0x77u8; 32])
+        );
+        assert_eq!(
+            rec.revocation_root,
+            BytesN::<32>::from_array(&_env, &[0x88u8; 32])
+        );
+        assert_eq!(
+            rec.approved_corridors_root,
+            BytesN::<32>::from_array(&_env, &[0x99u8; 32])
+        );
     }
 
     #[test]

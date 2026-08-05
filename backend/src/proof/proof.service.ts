@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { getPool } from '../db/client';
 import { NullifierService } from '../nullifier/nullifier.service';
+import { ProofVerificationService } from './proof-verification.service';
 import { RelayProofDto, PublicInputsDto, RelayProofResult } from './dto/relay-proof.dto';
 
 @Injectable()
@@ -15,6 +16,7 @@ export class ProofService {
   constructor(
     private readonly configService: ConfigService,
     private readonly nullifierService: NullifierService,
+    private readonly verifierService: ProofVerificationService,
   ) {
     this.verifierContractId = this.configService.get<string>('VERIFIER_CONTRACT_ID') ?? '';
     this.stellarRpcUrl = this.configService.get<string>('STELLAR_RPC_URL') ?? '';
@@ -29,6 +31,15 @@ export class ProofService {
     const nullifierStatus = await this.nullifierService.isUsed(dto.publicInputs.nullifier);
     if (nullifierStatus.used) {
       return { verified: false, error: 'Nullifier already used' };
+    }
+
+    // Off-chain UltraHonk verification gate (VERIFY_OFFCHAIN=true). Proves the
+    // proof against the compiled circuit before any on-chain cost is paid. The
+    // on-chain Groth16 check is stubbed, so this gate is the only real proof
+    // verification until a verifier is deployed.
+    const offchain = await this.verifierService.verify(dto.proof, dto.publicInputs);
+    if (offchain.enabled && !offchain.verified) {
+      return { verified: false, error: offchain.error ?? 'Off-chain proof verification failed' };
     }
 
     try {
@@ -122,21 +133,27 @@ export class ProofService {
     const amlBuf = Buffer.alloc(8);
     amlBuf.writeBigUInt64BE(BigInt(inputs.aml_threshold));
     const corridorIdBuf = Buffer.from(inputs.corridor_id.slice(2), 'hex');
+    const allowedJurisdictionsRootBuf = Buffer.from(inputs.allowed_jurisdictions_root.slice(2), 'hex');
     const amountCommitmentBuf = Buffer.from(inputs.amount_commitment.slice(2), 'hex');
     const revocationRootBuf = Buffer.from(inputs.revocation_root.slice(2), 'hex');
     const approvedCorridorsRootBuf = Buffer.from(inputs.approved_corridors_root.slice(2), 'hex');
-    const allowedJurisdictionsRootBuf = Buffer.from(inputs.allowed_jurisdictions_root.slice(2), 'hex');
 
+    // Layout MUST match the circuit's public parameter order in main.nr:
+    // nullifier, issuer_pubkey_hash, payment_asset, aml_threshold,
+    // corridor_id, allowed_jurisdictions_root, amount_commitment,
+    // revocation_root, approved_corridors_root. A real verifier binds the
+    // proof's public inputs in this order, so any other byte order here would
+    // make every field past corridor_id decode as the wrong value.
     return Buffer.concat([
       nullifierBuf,
       issuerPubkeyHashBuf,
       paymentAssetBuf,
       amlBuf,
       corridorIdBuf,
+      allowedJurisdictionsRootBuf,
       amountCommitmentBuf,
       revocationRootBuf,
       approvedCorridorsRootBuf,
-      allowedJurisdictionsRootBuf,
     ]);
   }
 
