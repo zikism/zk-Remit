@@ -95,6 +95,14 @@ describe('CredentialService', () => {
     expect(issuers[0].supportedCorridors).toContain('NG-PH');
   });
 
+  it('should not mutate the module-level issuer list between calls', async () => {
+    const first = await service.getIssuers();
+    const second = await service.getIssuers();
+    expect(first).not.toBe(second);
+    expect(first[0]).not.toBe(second[0]);
+    expect(first[0].pubkeyHash).toBe(second[0].pubkeyHash);
+  });
+
   it('should derive a 64-byte secp256k1 public key from the private key', () => {
     const pub = secp256k1.getPublicKey(Buffer.from(mockPrivateKey, 'hex'), false);
     // The credential response should expose x || y (64 bytes).

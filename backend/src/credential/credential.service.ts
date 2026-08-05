@@ -148,8 +148,10 @@ export class CredentialService {
     const pubkeyHash = this.poseidonService.poseidon2(pubkeyFields);
     const pubkeyHashHex = this.poseidonService.fieldToHex32(pubkeyHash);
 
-    ISSUERS[0].pubkeyHash = pubkeyHashHex;
-    return ISSUERS;
+    // Return a fresh object every call instead of mutating the module-level
+    // ISSUERS entry, so concurrent requests cannot observe a stale or partial
+    // pubkeyHash and the issuer list is immutable shared state.
+    return ISSUERS.map((issuer) => ({ ...issuer, pubkeyHash: pubkeyHashHex }));
   }
 
   async revoke(credentialHash: string): Promise<void> {
