@@ -8,12 +8,13 @@ import { Fr } from '@aztec/bb.js';
 
 const FrModulus = (): bigint => Fr.MODULUS;
 
-jest.mock('../db/client', () => ({
-  getPool: jest.fn(() => ({
-    query: jest.fn().mockResolvedValue({ rows: [] }),
-  })),
-  closePool: jest.fn(),
-}));
+jest.mock('../db/client', () => {
+  const query = jest.fn().mockResolvedValue({ rows: [], rowCount: 0 });
+  return {
+    getPool: jest.fn(() => ({ query })),
+    closePool: jest.fn(),
+  };
+});
 
 describe('CredentialService', () => {
   let service: CredentialService;
@@ -157,5 +158,29 @@ describe('CredentialService', () => {
     };
 
     await expect(service.issue(dto)).rejects.toThrow('Unsupported corridor');
+  });
+
+  describe('revoke', () => {
+    it('should mark a credential revoked', async () => {
+      const { getPool } = jest.requireMock('../db/client');
+      const pool = getPool();
+      pool.query.mockResolvedValue({ rowCount: 1 });
+
+      await expect(service.revoke('0x' + 'ab'.repeat(32))).resolves.toBeUndefined();
+
+      const updateCall = pool.query.mock.calls.find(([sql]: [string]) =>
+        sql.includes('UPDATE credentials')
+      );
+      expect(updateCall).toBeDefined();
+      expect(updateCall[1]).toEqual(['0x' + 'ab'.repeat(32)]);
+    });
+
+    it('should throw NotFoundException when the credential does not exist', async () => {
+      const { getPool } = jest.requireMock('../db/client');
+      const pool = getPool();
+      pool.query.mockResolvedValue({ rowCount: 0 });
+
+      await expect(service.revoke('0x' + 'cd'.repeat(32))).rejects.toThrow('not found');
+    });
   });
 });

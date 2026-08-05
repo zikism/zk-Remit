@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
@@ -156,10 +156,13 @@ export class CredentialService {
 
   async revoke(credentialHash: string): Promise<void> {
     const pool = getPool();
-    await pool.query(
-      `UPDATE credentials SET is_revoked = true, revoked_at = NOW()
+    const result = await pool.query(
+      `UPDATE credentials SET is_revoked = true, revoked_at = COALESCE(revoked_at, NOW())
        WHERE credential_hash = $1`,
       [credentialHash]
     );
+    if (result.rowCount === 0) {
+      throw new NotFoundException(`Credential ${credentialHash} not found`);
+    }
   }
 }
