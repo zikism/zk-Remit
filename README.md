@@ -323,9 +323,17 @@ PORT=3000
 STELLAR_RPC_URL=https://soroban-testnet.stellar.org
 STELLAR_PASSPHRASE="Test SDF Network ; September 2015"
 VERIFIER_CONTRACT_ID=C...
-ISSUER_PRIVATE_KEY=<Ed25519 key for signing credentials>
-NULLIFIER_DB_URL=postgres://localhost:5432/zkbridge
+ISSUER_PRIVATE_KEY=<32-byte secp256k1 hex key for signing credentials>
+DATABASE_URL=postgres://nullcarbon:nullcarbon@localhost:5432/zkremit
 JWT_SECRET=your-jwt-secret
+
+# Off-chain UltraHonk proof verification gate (optional).
+# When "true" the relay proves every proof against the compiled circuit before
+# any Soroban tx and rejects proofs that fail. The on-chain Groth16 check is
+# stubbed, so keep this on in front of the relay until a real verifier is
+# deployed. The circuit artifact lives at backend/circuits/zk_compliance.json.
+VERIFY_OFFCHAIN=false
+ZK_COMPLIANCE_CIRCUIT_PATH=
 ```
 
 ### 4. Compile the Noir Circuit
@@ -591,6 +599,71 @@ impl ComplianceVerifier {
 
 ---
 
+## Proof Verification & Public-Input Wire Format
+
+### On-chain AML threshold pinning
+
+The circuit only proves `amount < aml_threshold`; `aml_threshold` is a public
+input the prover controls, so a proof could claim any limit. The Soroban
+contract pins it: `verify_and_record` rejects any proof whose `aml_threshold`
+does not equal the corridor's configured threshold (`set_aml_threshold`, stored
+under `0x02 || corridor_id`). Unconfigured corridors default to a threshold of
+`0`, which no amount satisfies in-circuit. The admin keeps these in sync with
+`backend/src/compliance/compliance.config.ts`, the single source of truth that
+also drives the frontend proof generator, merkle trees, and SEP-31 limits.
+
+### Public-input byte layout (circuit order)
+
+The relay serializes public inputs and the contract decodes them in **exactly
+the circuit's parameter order** (`circuits/src/main.nr`), so any real verifier
+binds the right values:
+
+| Offset | Field |
+|---|---|
+| 0   | `nullifier` |
+| 32  | `issuer_pubkey_hash` |
+| 64  | `payment_asset` |
+| 96  | `aml_threshold` (u64 BE) |
+| 104 | `corridor_id` |
+| 136 | `allowed_jurisdictions_root` |
+| 168 | `amount_commitment` |
+| 200 | `revocation_root` |
+| 232 | `approved_corridors_root` |
+
+A contract round-trip test (`test_public_input_decode_matches_circuit_order`)
+and a relay integration test (`should encode public inputs in circuit byte
+order`) pin these offsets to prevent regressions.
+
+### Off-chain verification gate
+
+The on-chain Groth16 check is intentionally stubbed (Soroban has no
+`verify_groth16_bn254` host function yet; a real verifier must be built from
+the Protocol 25/26 BN254 host functions). Until that lands, `POST /proof/relay`
+can verify proofs **off-chain** with `VERIFY_OFFCHAIN=true`:
+
+- `ProofVerificationService` loads `backend/circuits/zk_compliance.json` (the
+  same compiled circuit the frontend and integration tests use) and feeds the
+  9 public inputs — converted to decimal fields in circuit order — to
+  `UltraHonkBackend.verifyProof` via bb.js.
+- A proof that fails off-chain verification is rejected before any Soroban
+  transaction is sent or any fee is paid.
+- When disabled (default) the relay still works against the stub, so a real
+  verifier can be dropped in without a flag flip.
+
+### Generating real proof artifacts (CI)
+
+`github/workflows/proof-artifacts.yml` produces a genuine UltraHonk proof +
+verification key for the committed circuit. It runs on a self-hosted
+**AVX512** runner (GitHub-hosted runners are AVX2-only and the default `bb`
+build misbehaves there) and uses `circuits/Prover.toml` — a committed,
+self-contained input set that is kept satisfiable by the CI circuit job
+(`nargo execute`). The workflow compiles with nargo 0.36.0, pins `bb` to
+0.36.0 to match the ACIR, executes the witness, proves, writes the VK, verifies
+round-trip, and uploads `proof`, `vk`, and `public_inputs.json` (the 9 values
+in circuit order) as artifacts.
+
+---
+
 ## API Reference
 
 ### Credential Endpoints
@@ -849,14 +922,18 @@ Before Protocol 25/26, implementing a ZK proof verifier on Soroban would have re
 
 ### Current Implementation
 - Uses a **mock KYC issuer** — intended to be replaced with a regulated identity provider (Persona, Jumio, Onfido, etc.)
-- Uses **Ed25519** for credential signing — production deployments should use an HSM-backed key
+- Uses **secp256k1 ECDSA** for credential signing (the circuit's `ecdsa_secp256k1` check) — production deployments should use an HSM-backed key
 - Stores nullifiers in Soroban **persistent storage** — safe but has rent costs; a dedicated nullifier contract is recommended at scale
+- Enforces **per-corridor AML thresholds on-chain** (`set_aml_threshold` / `verify_and_record` pinning)
+- Supports **credential revocation** (`POST /credential/revoke`) backed by an on-chain revocation-root check in the circuit
+- The on-chain **Groth16 proof check is stubbed** — real verification must be built from the Protocol 25/26 BN254 host functions. Until then, run the relay with `VERIFY_OFFCHAIN=true` (see Proof Verification section).
 
 ### Known Gaps & Future Work
 - **Trusted setup**: The Barretenberg UltraHonk backend does not require a trusted setup (unlike Groth16). This is intentional.
-- **Credential revocation**: A Merkle tree of revoked credential hashes should be added for production use
+- **Real on-chain verifier**: The contract's Groth16 check returns `true` unless a `REAL_VK` env override forces equality with a prover-supplied VK. DO NOT deploy with the stub in place.
 - **Amount hiding**: The circuit proves `amount < threshold` but the actual payment amount is visible on Stellar. Full confidential amounts require additional ZK work (e.g. Pedersen commitments).
 - **Issuer decentralization**: A single trusted issuer is a centralization risk. Production should use a consortium or decentralized identity network.
+- **Proof generation hardware**: Real `bb prove` runs need AVX512; the off-chain gate and CI job document this (see `proof-artifacts.yml`).
 
 ### Threat Model
 - **Proof soundness**: Guaranteed by the Noir/Barretenberg proving system — a valid proof can only be generated by someone holding a valid credential
@@ -874,11 +951,14 @@ Before Protocol 25/26, implementing a ZK proof verifier on Soroban would have re
 - [x] NestJS credential issuance API
 - [x] Angular frontend with in-browser proof generation
 - [x] End-to-end flow on Stellar testnet
+- [x] Credential revocation (admin endpoint + circuit revocation-root check)
+- [x] Multi-corridor support with per-corridor AML thresholds enforced on-chain
+- [x] Single-source compliance config (backend module → frontend proof inputs)
+- [x] Off-chain UltraHonk proof verification gate for the relay
 
 ### v0.2 — Near-term
 - [ ] Real KYC provider integration (Persona API)
-- [ ] Credential revocation via Merkle tree
-- [ ] Multi-corridor support with per-corridor compliance rules
+- [ ] Real on-chain Groth16/UltraHonk verifier from Protocol 25/26 BN254 host functions
 - [ ] Confidential amounts using Pedersen commitments
 
 ### v1.0 — Production

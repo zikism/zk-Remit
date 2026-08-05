@@ -34,6 +34,9 @@ jobs:
       - name: Run circuit tests
         working-directory: circuits
         run: nargo test
+      - name: Validate committed Prover.toml produces a witness
+        working-directory: circuits
+        run: nargo execute
 
   contracts:
     runs-on: ubuntu-latest

@@ -1,0 +1,88 @@
+name: Proof artifacts
+
+# Generates a real UltraHonk proof + verification key for the committed
+# circuit so the backend off-chain verification gate (VERIFY_OFFCHAIN=true)
+# can be exercised against genuine proving artifacts.
+#
+# Proof generation runs Barretenberg's `bb prove`, which this project only
+# runs on AVX512-capable hardware (GitHub-hosted runners are AVX2-only and the
+# default bb build misbehaves there). Trigger manually on a self-hosted runner
+# labelled `avx512`, then download the artifacts from the workflow run to
+# deploy alongside the backend.
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: [self-hosted, linux, x64, avx512]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nargo (0.36.0)
+        run: |
+          curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+          export PATH="$HOME/.noirup/bin:$PATH"
+          noirup -v 0.36.0
+
+      - name: Install bb (matching noir 0.36)
+        run: |
+          curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/bbup/install | bash
+          export PATH="$HOME/.bbup/bin:$PATH"
+          bbup -v 0.36.0
+
+      - name: Compile circuit
+        working-directory: circuits
+        run: nargo compile
+
+      - name: Execute witness from committed Prover.toml
+        working-directory: circuits
+        run: nargo execute
+
+      - name: Generate proof
+        working-directory: circuits
+        run: |
+          export PATH="$HOME/.bbup/bin:$PATH"
+          bb prove -b ./target/zk_compliance.json -w ./target/zk_compliance.gz -o ./target/proof
+
+      - name: Write verification key
+        working-directory: circuits
+        run: |
+          export PATH="$HOME/.bbup/bin:$PATH"
+          bb write_vk -b ./target/zk_compliance.json -o ./target/vk
+
+      - name: Verify proof against the verification key
+        working-directory: circuits
+        run: |
+          export PATH="$HOME/.bbup/bin:$PATH"
+          bb verify -k ./target/vk -p ./target/proof
+
+      - name: Package artifacts
+        working-directory: circuits
+        run: |
+          mkdir -p ./target/artifacts
+          cp ./target/proof ./target/artifacts/proof
+          cp ./target/vk ./target/artifacts/vk
+          # The 9 public inputs this proof commits to, in the circuit's
+          # parameter order (see main.nr). These must match what the backend
+          # serializes for verify_and_record and what the off-chain gate feeds
+          # to UltraHonkBackend.verifyProof.
+          cat > ./target/artifacts/public_inputs.json <<'EOF'
+          {
+            "nullifier": "1357950050555029929921390988943786518908957045138448594399398990097994072485",
+            "issuer_pubkey_hash": "2336791372758744260233576627453690259513827693686905825560323877274125089771",
+            "payment_asset": "3735928559",
+            "aml_threshold": "10000",
+            "corridor_id": "3405691582",
+            "allowed_jurisdictions_root": "13006475257798381608093127558626722125138950044590325135580511874914526758745",
+            "amount_commitment": "167471502961214629332637195682882514874558755618490110074898540022582197023",
+            "revocation_root": "16066299453349573034230800433165763440378128295318681057025865413649522018548",
+            "approved_corridors_root": "1919788944370224384828822552308434604911603467097934453868833495645208928148"
+          }
+          EOF
+
+      - name: Upload proof artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: zk-compliance-proof
+          path: circuits/target/artifacts/*
+          if-no-files-found: error

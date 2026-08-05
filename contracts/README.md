@@ -35,7 +35,7 @@ Verifies a Noir UltraHonk proof and records the nullifier to prevent double-use.
 
 **Returns:** `bool` — `true` if proof is valid and nullifier is fresh.
 
-**Public input byte layout (264 bytes):**
+**Public input byte layout (264 bytes) — circuit order** (must match `circuits/src/main.nr`):
 
 | Offset | Size | Field |
 |---|---|---|
@@ -44,15 +44,16 @@ Verifies a Noir UltraHonk proof and records the nullifier to prevent double-use.
 | 64 | 32 | `payment_asset` — Asset identifier hash |
 | 96 | 8 | `aml_threshold` — u64 big-endian |
 | 104 | 32 | `corridor_id` — Hash of corridor string |
-| 136 | 32 | `amount_commitment` — Pedersen commitment to amount |
-| 168 | 32 | `revocation_root` — Current revocation Merkle root |
-| 200 | 32 | `approved_corridors_root` — Current approved corridors root |
-| 232 | 32 | `allowed_jurisdictions_root` — Current jurisdictions root |
+| 136 | 32 | `allowed_jurisdictions_root` — Current jurisdictions root |
+| 168 | 32 | `amount_commitment` — Pedersen commitment to amount |
+| 200 | 32 | `revocation_root` — Current revocation Merkle root |
+| 232 | 32 | `approved_corridors_root` — Current approved corridors root |
 
 **Validation:**
 1. Roots in `public_inputs` must match stored roots (prevents stale proof attacks)
-2. Nullifier must not be previously recorded
-3. Proof must verify via `verify_groth16_bn254` host function
+2. `aml_threshold` must equal the corridor's configured threshold (see `set_aml_threshold`); unconfigured corridors default to `0` and are always rejected
+3. Nullifier must not be previously recorded
+4. Proof must verify via `verify_groth16_bn254` host function (currently stubbed to `true` — see Security Notes)
 
 **Authorization:** None (publicly callable).  
 **Events:** `(compliant, (nullifier, corridor_id, amount_commitment))`  
@@ -123,6 +124,37 @@ Updates the three Merkle roots (admin-only).
 
 ---
 
+### `set_aml_threshold`
+
+Sets the maximum amount (exclusive) allowed for a corridor. `verify_and_record`
+rejects any proof whose `aml_threshold` public input differs from this value, so
+the per-corridor AML limit is enforceable on-chain even while the Groth16 check
+is stubbed.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `caller` | `Address` | Must match stored admin |
+| `corridor_id` | `BytesN<32>` | Corridor identifier (field bytes) |
+| `threshold` | `u64` | Exclusive maximum amount |
+
+**Authorization:** `caller.require_auth()`. Must match stored admin.  
+**Events:** `(aml_thrsh, (corridor_id, threshold))`  
+**Storage:** Writes to persistent storage key `0x02 || corridor_id`.
+
+---
+
+### `get_aml_threshold`
+
+Returns the configured AML threshold for a corridor (0 if unconfigured).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `corridor_id` | `BytesN<32>` | Corridor identifier (field bytes) |
+
+**Returns:** `u64`
+
+---
+
 ## Storage Layout
 
 ### Instance Storage
@@ -142,6 +174,7 @@ Updates the three Merkle roots (admin-only).
 |---|---|---|
 | `nullifier` (`BytesN<32>`) | `bool` | Nullifier usage flag |
 | `0x01 || nullifier` (`BytesN<33>`) | `ComplianceRecord` | Full compliance record |
+| `0x02 || corridor_id` (`BytesN<33>`) | `u64` | Per-corridor AML threshold |
 
 ---
 
@@ -151,6 +184,7 @@ Updates the three Merkle roots (admin-only).
 |---|---|---|
 | `compliant` | `(nullifier, corridor_id, amount_commitment)` | After successful proof verification |
 | `roots_upd` | `()` | After admin updates Merkle roots |
+| `aml_thrsh` | `(corridor_id, threshold)` | After admin sets a corridor AML threshold |
 
 ---
 
@@ -211,7 +245,7 @@ To update Merkle roots (jurisdictions, corridors, revocation), call `update_root
 
 ## Security Notes
 
-- The contract uses `verify_groth16_bn254` host function (Protocol 25/26). Requires Stellar Protocol 25+.
-- The admin key controls root updates. Store the admin key securely (e.g., hardware wallet, multisig).
+- The contract currently **stubs the Groth16 check to `true`** (Soroban has no `verify_groth16_bn254` host function). The surrounding flow — nullifier replay protection, root staleness, per-corridor AML threshold pinning — is enforced and tested. A real verifier must be built from the Stellar Protocol 25/26 BN254 host functions before mainnet deployment.
+- The admin key controls root updates and AML thresholds. Store the admin key securely (e.g., hardware wallet, multisig).
 - Nullifier storage is permanent and immutable. A recorded nullifier can never be removed.
 - Root validation in `verify_and_record` prevents replay of proofs generated against stale roots.
