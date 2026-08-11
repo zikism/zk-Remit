@@ -1,7 +1,40 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env, IntoVal, Val,
 };
+
+/// Soroban charges rent on ledger entries: a persistent entry whose TTL runs
+/// out is garbage-collected, and an expired contract instance is deactivated.
+/// The nullifier and compliance-record keys are the security boundary of this
+/// contract - their expiry would silently re-enable replay of a spent proof -
+/// so every write and the hot read paths extend the TTL to keep entries alive
+/// for the full window below. `extend_ttl` is only a no-op when the entry's
+/// TTL is already above `TTL_THRESHOLD`, so re-extending on each read is cheap.
+const TTL_THRESHOLD: u32 = 1_000_000;
+const TTL_EXTEND_TO: u32 = 5_000_000;
+
+fn extend_to(env: &Env) -> u32 {
+    // `extend_ttl` errors if `threshold > extend_to` and overflows on
+    // `ledger_seq + extend_to`; clamp against the network cap so a valid call
+    // can never panic, even on a short-lived network.
+    let max_live = env.ledger().max_live_until_ledger();
+    let current = env.ledger().sequence();
+    core::cmp::min(TTL_EXTEND_TO, max_live.saturating_sub(current))
+}
+
+fn extend_persistent_ttl(env: &Env, key: &impl IntoVal<Env, Val>) {
+    let extend_to = extend_to(env);
+    if extend_to > TTL_THRESHOLD {
+        env.storage().persistent().extend_ttl(key, TTL_THRESHOLD, extend_to);
+    }
+}
+
+fn extend_instance_ttl(env: &Env) {
+    let extend_to = extend_to(env);
+    if extend_to > TTL_THRESHOLD {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, extend_to);
+    }
+}
 
 #[contracttype]
 pub struct ComplianceRecord {
@@ -63,6 +96,7 @@ impl ComplianceVerifier {
         env.storage()
             .instance()
             .set(&symbol_short!("rev_root"), &revocation_root);
+        extend_instance_ttl(&env);
     }
 
     pub fn verify_and_record(env: Env, proof: Bytes, public_inputs: Bytes) -> bool {
@@ -114,11 +148,13 @@ impl ComplianceVerifier {
         // so the effective per-corridor AML limit is enforced on-chain. An
         // unconfigured corridor defaults to 0, which no amount can satisfy
         // in-circuit, so its proofs are rejected here regardless.
-        let configured_threshold: u64 = env
-            .storage()
-            .persistent()
-            .get(&Self::corridor_threshold_key(&env, &corridor_id))
-            .unwrap_or(0);
+        let configured_threshold: u64 = {
+            let key = Self::corridor_threshold_key(&env, &corridor_id);
+            if env.storage().persistent().has(&key) {
+                extend_persistent_ttl(&env, &key);
+            }
+            env.storage().persistent().get(&key).unwrap_or(0)
+        };
         if aml_threshold != configured_threshold {
             return false;
         }
@@ -148,6 +184,7 @@ impl ComplianceVerifier {
         }
 
         env.storage().persistent().set(&nullifier, &true);
+        extend_persistent_ttl(&env, &nullifier);
 
         let record = ComplianceRecord {
             nullifier: nullifier.clone(),
@@ -167,6 +204,7 @@ impl ComplianceVerifier {
         record_key[1..33].copy_from_slice(&nullifier.to_array());
         let record_key_n = BytesN::<33>::from_array(&env, &record_key);
         env.storage().persistent().set(&record_key_n, &record);
+        extend_persistent_ttl(&env, &record_key_n);
 
         env.events().publish(
             (symbol_short!("compliant"),),
@@ -177,7 +215,11 @@ impl ComplianceVerifier {
     }
 
     pub fn is_nullifier_used(env: Env, nullifier: BytesN<32>) -> bool {
-        env.storage().persistent().has(&nullifier)
+        let used = env.storage().persistent().has(&nullifier);
+        if used {
+            extend_persistent_ttl(&env, &nullifier);
+        }
+        used
     }
 
     fn corridor_threshold_key(env: &Env, corridor_id: &BytesN<32>) -> BytesN<33> {
@@ -206,18 +248,19 @@ impl ComplianceVerifier {
         if caller != admin {
             panic!("Caller is not admin");
         }
-        env.storage()
-            .persistent()
-            .set(&Self::corridor_threshold_key(&env, &corridor_id), &threshold);
+        let key = Self::corridor_threshold_key(&env, &corridor_id);
+        env.storage().persistent().set(&key, &threshold);
+        extend_persistent_ttl(&env, &key);
         env.events()
             .publish((symbol_short!("aml_thrsh"),), (corridor_id, threshold));
     }
 
     pub fn get_aml_threshold(env: Env, corridor_id: BytesN<32>) -> u64 {
-        env.storage()
-            .persistent()
-            .get(&Self::corridor_threshold_key(&env, &corridor_id))
-            .unwrap_or(0)
+        let key = Self::corridor_threshold_key(&env, &corridor_id);
+        if env.storage().persistent().has(&key) {
+            extend_persistent_ttl(&env, &key);
+        }
+        env.storage().persistent().get(&key).unwrap_or(0)
     }
 
     pub fn get_compliance_record(
@@ -228,6 +271,9 @@ impl ComplianceVerifier {
         record_key[0] = 0x01;
         record_key[1..33].copy_from_slice(&nullifier.to_array());
         let record_key_n = BytesN::<33>::from_array(&env, &record_key);
+        if env.storage().persistent().has(&record_key_n) {
+            extend_persistent_ttl(&env, &record_key_n);
+        }
         env.storage().persistent().get(&record_key_n)
     }
 
@@ -263,6 +309,7 @@ impl ComplianceVerifier {
         env.storage()
             .instance()
             .set(&symbol_short!("jur_root"), &new_allowed_jurisdictions_root);
+        extend_instance_ttl(&env);
 
         env.events().publish((symbol_short!("roots_upd"),), ());
     }
@@ -272,10 +319,11 @@ impl ComplianceVerifier {
 mod test {
     extern crate std;
     use super::*;
+    use soroban_sdk::testutils::storage::{Instance as _, Persistent as _};
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env};
 
-    fn setup_test_env() -> (Env, ComplianceVerifierClient<'static>, Address) {
+    fn setup_test_env_full() -> (Env, ComplianceVerifierClient<'static>, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, ComplianceVerifier);
@@ -287,6 +335,11 @@ mod test {
 
         client.initialize(&vk, &admin, &root, &root, &root);
 
+        (env, client, admin, contract_id)
+    }
+
+    fn setup_test_env() -> (Env, ComplianceVerifierClient<'static>, Address) {
+        let (env, client, admin, _) = setup_test_env_full();
         (env, client, admin)
     }
 
@@ -521,5 +574,89 @@ mod test {
             client.set_aml_threshold(&attacker, &corridor_id, &100);
         }));
         assert!(result.is_err());
+    }
+
+    fn expected_extended_ttl(env: &Env) -> u32 {
+        let max_live = env.ledger().max_live_until_ledger();
+        let current = env.ledger().sequence();
+        // `extend_ttl` sets live_until = ledger_seq + extend_to, and the
+        // testutils get_ttl reports the number of ledgers remaining, so the
+        // observed TTL equals extend_to (clamped by the network cap).
+        core::cmp::min(TTL_EXTEND_TO, max_live.saturating_sub(current))
+    }
+
+    #[test]
+    fn test_ttl_extended_on_nullifier_and_record() {
+        let (env, client, _admin, contract_id) = setup_test_env_full();
+
+        let proof = Bytes::from_array(&env, &[0u8; 128]);
+        let pi = Bytes::from_array(&env, &[0u8; 264]);
+        assert!(client.verify_and_record(&proof, &pi));
+
+        let nullifier = BytesN::<32>::from_array(&env, &[0u8; 32]);
+        let expected = expected_extended_ttl(&env);
+        assert!(
+            expected > TTL_THRESHOLD,
+            "test env must allow a real TTL window, got {expected}"
+        );
+
+        // The nullifier replay-protection entry is the security boundary; its
+        // TTL must be the extended window, not the default.
+        let ttl = env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&nullifier));
+        assert_eq!(ttl, expected);
+
+        // The compliance record (0x01-prefixed key) gets the same extension.
+        let mut record_key = [0u8; 33];
+        record_key[0] = 0x01;
+        record_key[1..33].copy_from_slice(&nullifier.to_array());
+        let record_key_n = BytesN::<33>::from_array(&env, &record_key);
+        let ttl = env.as_contract(&contract_id, || {
+            env.storage().persistent().get_ttl(&record_key_n)
+        });
+        assert_eq!(ttl, expected);
+    }
+
+    #[test]
+    fn test_ttl_extended_on_threshold_write_and_reads() {
+        let (env, client, admin, contract_id) = setup_test_env_full();
+
+        let corridor_id = corridor_bytes_n(&env, 0xAB);
+        client.set_aml_threshold(&admin, &corridor_id, &10_000);
+
+        let mut key = [0u8; 33];
+        key[0] = 0x02;
+        key[1..33].copy_from_slice(&corridor_id.to_array());
+        let key = BytesN::<33>::from_array(&env, &key);
+        let expected = expected_extended_ttl(&env);
+        let ttl = env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
+        assert_eq!(ttl, expected);
+
+        // The hot read paths (is_nullifier_used, get_aml_threshold,
+        // get_compliance_record) re-extend as long as the entry is live, and
+        // must never panic on a never-written key.
+        assert!(!client.is_nullifier_used(&corridor_id));
+        assert_eq!(client.get_aml_threshold(&corridor_id), 10_000);
+        assert!(client.get_compliance_record(&corridor_id).is_none());
+
+        let missing = corridor_bytes_n(&env, 0xCD);
+        assert_eq!(client.get_aml_threshold(&missing), 0);
+    }
+
+    #[test]
+    fn test_instance_ttl_extended_on_initialize_and_update_roots() {
+        let (env, client, admin, contract_id) = setup_test_env_full();
+
+        let expected = expected_extended_ttl(&env);
+        let ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert_eq!(ttl, expected);
+
+        client.update_roots(
+            &admin,
+            &BytesN::<32>::from_array(&env, &[0xAAu8; 32]),
+            &BytesN::<32>::from_array(&env, &[0xBBu8; 32]),
+            &BytesN::<32>::from_array(&env, &[0xCCu8; 32]),
+        );
+        let ttl = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert_eq!(ttl, expected);
     }
 }
