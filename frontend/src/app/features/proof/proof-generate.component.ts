@@ -8,6 +8,7 @@ import {
 } from '../../shared/services/noir.service';
 import { CredentialService } from '../../shared/services/credential.service';
 import { PoseidonService } from '../../shared/services/poseidon.service';
+import { utf8ToFieldHex } from '../../shared/utils/proof-inputs';
 import { Credential } from '../credential/credential-fetch.component';
 import { ProofStatusComponent } from '../../shared/components/proof-status/proof-status.component';
 
@@ -103,7 +104,7 @@ function hexToBytes(hex: string): number[] {
             </button>
           </div>
           <div class="grid grid-cols-2 gap-1 text-xs text-gray-500">
-            <span>AML Threshold: {{ pr.publicInputs['aml_threshold'] }}</span>
+            <span>AML Threshold: {{ pr.publicInputs.aml_threshold }}</span>
             <span>Corridor: {{ corridorId }}</span>
             <span>Asset: {{ paymentAsset }}</span>
           </div>
@@ -273,7 +274,9 @@ export class ProofGenerateComponent implements OnDestroy {
         approved_corridors_indices: corridorPath.indices,
         nullifier,
         issuer_pubkey_hash: issuerPubkeyHash,
-        payment_asset: '0x00',
+        // The asset actually being paid, encoded the same way the backend
+        // derives corridor fields (BigInt of the UTF-8 bytes, 32-byte padded).
+        payment_asset: utf8ToFieldHex(this.paymentAsset),
         aml_threshold: config.amlThreshold,
         corridor_id: this.credential.corridorId,
         allowed_jurisdictions_root: merkleRoots.jurisdictionRoot,

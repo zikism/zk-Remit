@@ -1,5 +1,10 @@
 /// <reference lib="webworker" />
 
+import {
+  ProofPublicInputs,
+  mapProofPublicInputs,
+} from '../utils/proof-inputs';
+
 interface ProofProgress {
   stage: 'idle' | 'loading' | 'witness' | 'proof' | 'done' | 'error';
   percent: number;
@@ -39,7 +44,7 @@ interface CircuitInputs {
 
 interface ProofResult {
   proof: string;
-  publicInputs: Record<string, string>;
+  publicInputs: ProofPublicInputs;
   generationTimeMs: number;
   constraintCount: number;
   nullifier: string;
@@ -86,11 +91,7 @@ self.onmessage = async (e: MessageEvent<ProofWorkerMessage>) => {
 
     postProgress('done', 100, `Proof generated in ${elapsed}ms`);
 
-    const publicInputs: Record<string, string> = {};
-    const piArray = proofData.publicInputs as string[];
-    piArray.forEach((val: string, idx: number) => {
-      publicInputs[`pub_${idx}`] = val;
-    });
+    const publicInputs = mapProofPublicInputs(proofData.publicInputs as string[]);
 
     const proofHex = Array.from(proofData.proof as Uint8Array)
       .map((b: number) => b.toString(16).padStart(2, '0'))
@@ -101,7 +102,7 @@ self.onmessage = async (e: MessageEvent<ProofWorkerMessage>) => {
       publicInputs,
       generationTimeMs: elapsed,
       constraintCount: 4312,
-      nullifier: publicInputs['nullifier'] || '',
+      nullifier: publicInputs.nullifier,
     };
 
     self.postMessage({ type: 'PROOF_DONE', result });

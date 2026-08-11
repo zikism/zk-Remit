@@ -1,6 +1,10 @@
 import { Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Subject, lastValueFrom } from 'rxjs';
+import {
+  ProofPublicInputs,
+  mapProofPublicInputs,
+} from '../utils/proof-inputs';
 
 export interface ProofProgress {
   stage: 'idle' | 'loading' | 'witness' | 'proof' | 'done' | 'error';
@@ -41,7 +45,7 @@ export interface CircuitInputs {
 
 export interface ProofResult {
   proof: string;
-  publicInputs: Record<string, string>;
+  publicInputs: ProofPublicInputs;
   generationTimeMs: number;
   constraintCount: number;
   nullifier: string;
@@ -133,11 +137,7 @@ export class NoirService {
       elapsedMs: elapsed,
     });
 
-    const publicInputs: Record<string, string> = {};
-    const piArray = proofData.publicInputs as string[];
-    piArray.forEach((val: string, idx: number) => {
-      publicInputs[`pub_${idx}`] = val;
-    });
+    const publicInputs = mapProofPublicInputs(proofData.publicInputs as string[]);
 
     const proofHex = Array.from(proofData.proof as Uint8Array)
       .map((b: number) => b.toString(16).padStart(2, '0'))
@@ -148,7 +148,7 @@ export class NoirService {
       publicInputs,
       generationTimeMs: elapsed,
       constraintCount: 4312,
-      nullifier: publicInputs['nullifier'] || '',
+      nullifier: publicInputs.nullifier,
     };
   }
 

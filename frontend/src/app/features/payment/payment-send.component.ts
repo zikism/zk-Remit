@@ -198,19 +198,20 @@ export class PaymentSendComponent {
     this.txHash.set(null);
 
     try {
+      const pi = this.proofResult.publicInputs;
       const relayResult: any = await lastValueFrom(
         this.http.post(`${environment.apiUrl}/proof/relay`, {
           proof: this.proofResult.proof,
           publicInputs: {
             nullifier: this.proofResult.nullifier,
-            issuer_pubkey_hash: this.proofResult.publicInputs['pub_0'] || '0x00',
-            payment_asset: '0x00',
-            aml_threshold: 10000,
-            corridor_id: '0x00',
-            amount_commitment: '0x00',
-            revocation_root: '0x00',
-            approved_corridors_root: '0x00',
-            allowed_jurisdictions_root: '0x00',
+            issuer_pubkey_hash: pi.issuer_pubkey_hash,
+            payment_asset: pi.payment_asset,
+            aml_threshold: pi.aml_threshold,
+            corridor_id: pi.corridor_id,
+            amount_commitment: pi.amount_commitment,
+            revocation_root: pi.revocation_root,
+            approved_corridors_root: pi.approved_corridors_root,
+            allowed_jurisdictions_root: pi.allowed_jurisdictions_root,
           },
         })
       );
