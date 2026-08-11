@@ -144,7 +144,10 @@ describe('ProofService Integration', () => {
     issuer_pubkey_hash: '0x' + 'b'.repeat(64),
     payment_asset: '0x' + 'c'.repeat(64),
     aml_threshold: 10000,
-    corridor_id: '0x' + 'd'.repeat(64),
+    // Circuit field of the configured NG-PH corridor (see
+    // compliance.config.ts) — the relay rejects unconfigured corridors and
+    // thresholds that don't match the corridor config before any tx.
+    corridor_id: '0x0000000000000000000000000000000000000000000000000000004e472d5048',
     amount_commitment: '0x' + 'e'.repeat(64),
     revocation_root: '0x' + 'f'.repeat(64),
     approved_corridors_root: '0x' + '0'.repeat(64),
@@ -168,7 +171,7 @@ describe('ProofService Integration', () => {
     expectField(64, 'c'.repeat(64));
     const amlBytes = buf.subarray(96, 104);
     expect(amlBytes.readBigUInt64BE()).toBe(BigInt(10000));
-    expectField(104, 'd'.repeat(64));
+    expectField(104, '0'.repeat(54) + '4e472d5048');
     expectField(136, '1'.repeat(64));
     expectField(168, 'e'.repeat(64));
     expectField(200, 'f'.repeat(64));
@@ -189,6 +192,45 @@ describe('ProofService Integration', () => {
     const result = await proofService.relay(dto);
     expect(result.verified).toBe(false);
     expect(result.error).toBe('Nullifier already used');
+  });
+
+  it('should reject a proof whose corridor is not configured', async () => {
+    jest.spyOn(nullifierService, 'isUsed').mockResolvedValue({
+      used: false,
+      source: 'fresh',
+    });
+
+    const dto: RelayProofDto = {
+      proof: '0x' + 'ab'.repeat(100),
+      publicInputs: { ...validPublicInputs, corridor_id: '0x' + 'd'.repeat(64) },
+    };
+
+    const result = await proofService.relay(dto);
+    expect(result.verified).toBe(false);
+    expect(result.error).toContain('not configured');
+
+    // No Stellar tx should ever be attempted for an unknown corridor.
+    const { SorobanRpc } = require('@stellar/stellar-sdk');
+    expect(SorobanRpc.Server().getTransaction).not.toHaveBeenCalled();
+  });
+
+  it('should reject a proof whose aml_threshold does not match the corridor config', async () => {
+    jest.spyOn(nullifierService, 'isUsed').mockResolvedValue({
+      used: false,
+      source: 'fresh',
+    });
+
+    const dto: RelayProofDto = {
+      proof: '0x' + 'ab'.repeat(100),
+      publicInputs: { ...validPublicInputs, aml_threshold: 9999 },
+    };
+
+    const result = await proofService.relay(dto);
+    expect(result.verified).toBe(false);
+    expect(result.error).toContain('does not match');
+
+    const { SorobanRpc } = require('@stellar/stellar-sdk');
+    expect(SorobanRpc.Server().getTransaction).not.toHaveBeenCalled();
   });
 
   it('should run the off-chain gate when VERIFY_OFFCHAIN is enabled and reject on failure', async () => {

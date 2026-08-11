@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
 import { ComplianceController } from './compliance.controller';
-import { CORRIDORS, APPROVED_CORRIDORS, JURISDICTION_CODES, corridorConfig } from './compliance.config';
+import { CORRIDORS, APPROVED_CORRIDORS, JURISDICTION_CODES, corridorConfig, corridorIdToFieldHex, corridorConfigByFieldHex } from './compliance.config';
 
 describe('ComplianceController', () => {
   let controller: ComplianceController;
@@ -51,5 +51,15 @@ describe('ComplianceConfig', () => {
   it('should expose corridor config through the lookup helper', () => {
     expect(corridorConfig('KE-DE').senderJurisdiction).toBe(404);
     expect(() => corridorConfig('NOPE')).toThrow('Unsupported corridor');
+  });
+
+  it('should round-trip a corridor through its circuit field', () => {
+    // The credential issuer and the relay both encode corridor ids as
+    // BigInt(utf8 bytes) padded to 32 bytes; this is what the proof's
+    // corridor_id public input carries.
+    const field = corridorIdToFieldHex('NG-PH');
+    expect(field).toBe('0x0000000000000000000000000000000000000000000000000000004e472d5048');
+    expect(corridorConfigByFieldHex(field)?.corridorId).toBe('NG-PH');
+    expect(corridorConfigByFieldHex('0x' + 'ff'.repeat(32))).toBeUndefined();
   });
 });

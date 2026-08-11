@@ -55,3 +55,19 @@ export function corridorConfig(corridorId: string): CorridorConfig {
   }
   return config;
 }
+
+/**
+ * The circuit field a corridor id maps to: BigInt of its big-endian UTF-8
+ * bytes, 32-byte padded. This is the same encoding the credential issuer uses
+ * for `corridor_id` (credential.service) and what the proof's public input
+ * carries, so it is how the relay/contract recognize a corridor.
+ */
+export function corridorIdToFieldHex(corridorId: string): string {
+  const field = BigInt('0x' + Buffer.from(corridorId, 'utf-8').toString('hex'));
+  return '0x' + field.toString(16).padStart(64, '0');
+}
+
+/** Look up the configured corridor whose circuit field equals `corridorFieldHex`. */
+export function corridorConfigByFieldHex(corridorFieldHex: string): CorridorConfig | undefined {
+  return CORRIDORS.find((c) => corridorIdToFieldHex(c.corridorId) === corridorFieldHex);
+}

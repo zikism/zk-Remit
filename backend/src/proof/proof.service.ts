@@ -4,6 +4,7 @@ import { getPool } from '../db/client';
 import { NullifierService } from '../nullifier/nullifier.service';
 import { ProofVerificationService } from './proof-verification.service';
 import { RelayProofDto, PublicInputsDto, RelayProofResult } from './dto/relay-proof.dto';
+import { corridorConfigByFieldHex } from '../compliance/compliance.config';
 
 @Injectable()
 export class ProofService {
@@ -31,6 +32,22 @@ export class ProofService {
     const nullifierStatus = await this.nullifierService.isUsed(dto.publicInputs.nullifier);
     if (nullifierStatus.used) {
       return { verified: false, error: 'Nullifier already used' };
+    }
+
+    // Mirror the on-chain AML pinning off-chain, before any Soroban fee is
+    // spent. The circuit only proves `amount < aml_threshold` and the prover
+    // controls that public input, so a proof can claim any corridor/limit.
+    // The contract rejects mismatches anyway, but rejecting here saves the
+    // deployer's fee and returns a precise error instead of a failed tx.
+    const corridor = corridorConfigByFieldHex(dto.publicInputs.corridor_id);
+    if (!corridor) {
+      return { verified: false, error: `Corridor ${dto.publicInputs.corridor_id} is not configured` };
+    }
+    if (dto.publicInputs.aml_threshold !== corridor.amlThreshold) {
+      return {
+        verified: false,
+        error: `aml_threshold ${dto.publicInputs.aml_threshold} does not match the ${corridor.corridorId} corridor config (${corridor.amlThreshold})`,
+      };
     }
 
     // Off-chain UltraHonk verification gate (VERIFY_OFFCHAIN=true). Proves the
