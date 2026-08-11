@@ -18,7 +18,6 @@ jest.mock('../db/client', () => {
 
 describe('CredentialService', () => {
   let service: CredentialService;
-  let configService: ConfigService;
 
   // 32-byte secp256k1 private scalar (64 hex chars).
   const mockPrivateKey = 'a'.repeat(64);
@@ -57,7 +56,6 @@ describe('CredentialService', () => {
     }).compile();
 
     service = module.get<CredentialService>(CredentialService);
-    configService = module.get<ConfigService>(ConfigService);
   });
 
   it('should be defined', () => {

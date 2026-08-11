@@ -1,4 +1,3 @@
-import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { ProofVerificationService } from './proof-verification.service';
 import { PublicInputsDto } from './dto/relay-proof.dto';

@@ -1,4 +1,4 @@
-import { IsString, IsObject, IsNumber, Min, ValidateNested } from 'class-validator';
+import { IsString, IsNumber, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class PublicInputsDto {

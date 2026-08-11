@@ -1,6 +1,5 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { getPool } from '../db/client';
 import { NullifierService } from '../nullifier/nullifier.service';
 import { ProofVerificationService } from './proof-verification.service';
 import { RelayProofDto, PublicInputsDto, RelayProofResult } from './dto/relay-proof.dto';
