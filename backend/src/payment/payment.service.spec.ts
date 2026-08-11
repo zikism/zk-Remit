@@ -7,6 +7,11 @@ import { getPool } from '../db/client';
 
 jest.mock('../db/client');
 
+// Circuit field of the configured NG-PH corridor (compliance.config.ts) and
+// its AML threshold. The proof's corridor_id public input carries this field.
+const NG_PH_CORRIDOR_FIELD = '0x0000000000000000000000000000000000000000000000000000004e472d5048';
+const GH_US_CORRIDOR_FIELD = '0x00000000000000000000000000000000000000000000000000000047482d5553';
+
 const mockSubmitTransaction = jest.fn();
 
 const mockTx = {
@@ -24,6 +29,12 @@ const mockTx = {
       },
     },
   ],
+};
+
+const mockTxLargeAmount = {
+  ...mockTx,
+  hash: () => Buffer.from('ab', 'hex'),
+  operations: [{ ...mockTx.operations[0], amount: '50000' }],
 };
 
 const mockTxNoPayment = {
@@ -119,7 +130,7 @@ describe('PaymentService', () => {
     it('should submit and record payment details from the XDR', async () => {
       mockQuery.mockImplementation((sql: string) =>
         sql.includes('FROM nullifiers')
-          ? Promise.resolve({ rows: [{ corridor_id: 'corr' }] })
+          ? Promise.resolve({ rows: [{ corridor_id: NG_PH_CORRIDOR_FIELD }] })
           : Promise.resolve({ rows: [] }),
       );
       mockSubmitTransaction.mockResolvedValue({ ledger: 12345 });
@@ -143,10 +154,38 @@ describe('PaymentService', () => {
         '100.5',
         'USDC',
         'GAISS0000000000000000000000000000000000000000000000000000000',
-        'corr',
+        NG_PH_CORRIDOR_FIELD,
         'ab',
         12345,
       ]);
+    });
+
+    it('should reject a payment above the corridor AML threshold', async () => {
+      const { TransactionBuilder } = await import('@stellar/stellar-sdk');
+      (TransactionBuilder.fromXDR as jest.Mock).mockReturnValueOnce(mockTxLargeAmount);
+      mockQuery.mockImplementation((sql: string) =>
+        sql.includes('FROM nullifiers')
+          ? Promise.resolve({ rows: [{ corridor_id: GH_US_CORRIDOR_FIELD }] })
+          : Promise.resolve({ rows: [] }),
+      );
+
+      await expect(
+        service.send({ nullifier: '0x' + 'a'.repeat(64), signedXdr: 'AAAA' }),
+      ).rejects.toThrow('AML threshold');
+      expect(mockSubmitTransaction).not.toHaveBeenCalled();
+    });
+
+    it('should reject a payment whose nullifier corridor is not configured', async () => {
+      mockQuery.mockImplementation((sql: string) =>
+        sql.includes('FROM nullifiers')
+          ? Promise.resolve({ rows: [{ corridor_id: '0x' + 'ff'.repeat(32) }] })
+          : Promise.resolve({ rows: [] }),
+      );
+
+      await expect(
+        service.send({ nullifier: '0x' + 'a'.repeat(64), signedXdr: 'AAAA' }),
+      ).rejects.toThrow('Corridor not configured');
+      expect(mockSubmitTransaction).not.toHaveBeenCalled();
     });
 
     it('should reject a transaction without a payment operation', async () => {

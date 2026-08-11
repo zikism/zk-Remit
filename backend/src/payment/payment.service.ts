@@ -2,7 +2,7 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { getPool } from '../db/client';
 import { NullifierService } from '../nullifier/nullifier.service';
-import { CORRIDOR_MAP } from '../compliance/compliance.config';
+import { CORRIDOR_MAP, corridorConfigByFieldHex } from '../compliance/compliance.config';
 import {
   SendPaymentDto,
   BuildPaymentDto,
@@ -57,6 +57,25 @@ export class PaymentService {
     const paymentOp = transaction.operations.find((op: any) => op.type === 'payment') as any;
     if (!paymentOp) {
       throw new BadRequestException('Transaction must contain a payment operation');
+    }
+
+    // The proof only certified `amount < aml_threshold` for the corridor bound
+    // to the nullifier. The payment op amount is independent of the proof, so a
+    // client could relay a small proof and submit a large payment. Enforce the
+    // corridor's AML limit here so the payment can never exceed what the proof
+    // actually authorized.
+    const corridor = corridorConfigByFieldHex(rows[0].corridor_id);
+    if (!corridor) {
+      throw new BadRequestException('Corridor not configured for this proof');
+    }
+    const paymentAmount = parseFloat(paymentOp.amount);
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+      throw new BadRequestException('Payment amount must be a positive number');
+    }
+    if (paymentAmount >= corridor.amlThreshold) {
+      throw new BadRequestException(
+        `Payment amount ${paymentOp.amount} exceeds the ${corridor.corridorId} AML threshold of ${corridor.amlThreshold}`
+      );
     }
 
     const fromAddress = transaction.source;
