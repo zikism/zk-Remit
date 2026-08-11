@@ -167,3 +167,38 @@ describe('zkremit Backend E2E', () => {
     expect(res.body.root).toBe('0x097ce8473506051524c0eb452870e04fadc52385c087b750f52874f05a299c78');
   });
 });
+
+describe('POST /credential/issue rate limiting', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    app = moduleFixture.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ transform: true }));
+    await app.init();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('returns 429 once the per-IP issuance budget is exhausted', async () => {
+    const payload = {
+      walletAddress: 'G' + 'A'.repeat(55),
+      kycProvider: 'mock-issuer',
+      corridorId: 'NG-PH',
+    };
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 7; i++) {
+      const res = await request(app.getHttpServer()).post('/credential/issue').send(payload);
+      statuses.push(res.status);
+    }
+
+    // Limit is 5/min; the first 5 are issued, the rest must be throttled.
+    expect(statuses.slice(0, 5).every((s) => s === 201)).toBe(true);
+    expect(statuses.slice(5).every((s) => s === 429)).toBe(true);
+  });
+});

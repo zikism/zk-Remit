@@ -1,13 +1,22 @@
-import { Controller, Post, Get, Body, ValidationPipe, UsePipes } from '@nestjs/common';
+import { Controller, Post, Get, Body, ValidationPipe, UsePipes, UseGuards } from '@nestjs/common';
+import { ThrottlerGuard, Throttle } from '@nestjs/throttler';
 import { CredentialService } from './credential.service';
 import { IssueCredentialDto } from './dto/issue-credential.dto';
 import { RevokeCredentialDto } from './dto/revoke-credential.dto';
 
 @Controller('credential')
+@UseGuards(ThrottlerGuard)
 export class CredentialController {
   constructor(private readonly credentialService: CredentialService) {}
 
+  /**
+   * Minting a credential grants the holder a valid KYC asset for 90 days, so
+   * it is the one endpoint that should never be freely spamable: a fixed
+   * per-IP budget of 5 issuances/minute (vs the global 10 req/min default)
+   * caps credential minting without needing any user identity.
+   */
   @Post('issue')
+  @Throttle({ default: { ttl: 60000, limit: 5 } })
   @UsePipes(new ValidationPipe({ whitelist: true }))
   async issue(@Body() dto: IssueCredentialDto) {
     return this.credentialService.issue(dto);
