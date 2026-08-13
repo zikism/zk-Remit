@@ -22,7 +22,7 @@ jobs:
       - name: Install bb
         run: |
           export PATH="$HOME/.bb:$PATH"
-          bbup
+          bbup -v 0.36.0
       - name: Cache nargo
         uses: actions/cache@v4
         with:
