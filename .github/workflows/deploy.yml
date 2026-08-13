@@ -31,6 +31,7 @@ jobs:
             --wasm-out target/wasm32-unknown-unknown/release/verifier.optimized.wasm
 
       - name: Deploy to testnet
+        if: secrets.DEPLOYER_SECRET_KEY != ''
         run: |
           VERIFIER_CONTRACT_ID=$(stellar contract deploy \
             --wasm contracts/verifier/target/wasm32-unknown-unknown/release/verifier.optimized.wasm \
@@ -39,11 +40,13 @@ jobs:
           echo "VERIFIER_CONTRACT_ID=$VERIFIER_CONTRACT_ID" >> $GITHUB_ENV
 
       - name: Run E2E tests
+        if: env.VERIFIER_CONTRACT_ID != ''
         run: bash scripts/test-e2e.sh
         env:
           API_URL: https://soroban-testnet.stellar.org
 
       - name: Comment contract ID on commit
+        if: env.VERIFIER_CONTRACT_ID != ''
         uses: actions/github-script@v7
         with:
           script: |
@@ -78,6 +81,7 @@ jobs:
             --wasm-out target/wasm32-unknown-unknown/release/verifier.optimized.wasm
 
       - name: Deploy to mainnet
+        if: secrets.DEPLOYER_SECRET_KEY != ''
         run: |
           VERIFIER_CONTRACT_ID=$(stellar contract deploy \
             --wasm contracts/verifier/target/wasm32-unknown-unknown/release/verifier.optimized.wasm \
@@ -86,6 +90,7 @@ jobs:
           echo "VERIFIER_CONTRACT_ID=$VERIFIER_CONTRACT_ID" >> $GITHUB_ENV
 
       - name: Create GitHub Release
+        if: env.VERIFIER_CONTRACT_ID != ''
         uses: softprops/action-gh-release@v2
         with:
           body: "Release ${{ github.ref_name }} — mainnet deployment"
