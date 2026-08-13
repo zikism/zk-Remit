@@ -20,7 +20,7 @@ jobs:
           target: wasm32-unknown-unknown
 
       - name: Install stellar-cli
-        run: cargo install --locked stellar-cli
+        uses: stellar/stellar-cli@v27.1.0
 
       - name: Build and optimize verifier WASM
         working-directory: contracts/verifier
@@ -67,7 +67,7 @@ jobs:
           target: wasm32-unknown-unknown
 
       - name: Install stellar-cli
-        run: cargo install --locked stellar-cli
+        uses: stellar/stellar-cli@v27.1.0
 
       - name: Build and optimize verifier WASM
         working-directory: contracts/verifier
