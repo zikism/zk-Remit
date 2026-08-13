@@ -24,11 +24,11 @@ jobs:
           export PATH="$HOME/.nargo/bin:$PATH"
           noirup -v 0.36.0
 
-      - name: Install bb (matching noir 0.36)
+      - name: Install bb (matching backend bb.js 0.69)
         run: |
           curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/bbup/install | bash
           export PATH="$HOME/.bb:$PATH"
-          bbup -v 0.36.0
+          bbup -v 0.69.0
 
       - name: Compile circuit
         working-directory: circuits
