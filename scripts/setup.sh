@@ -49,7 +49,7 @@ fi
 if command -v stellar &>/dev/null; then
   info "stellar-cli found ($(stellar --version | head -1))"
 else
-  warn "stellar-cli not found. Install with: cargo install --locked stellar-cli --features opt"
+  warn "stellar-cli not found. Install with: cargo install --locked stellar-cli"
 fi
 
 # nargo (Noir)
@@ -58,7 +58,7 @@ if command -v nargo &>/dev/null; then
 else
   info "Installing noirup..."
   curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
-  export PATH="$HOME/.noirup/bin:$PATH"
+  export PATH="$HOME/.nargo/bin:$PATH"
   noirup
   info "nargo installed"
 fi
@@ -69,7 +69,7 @@ if command -v bb &>/dev/null; then
 else
   info "Installing bbup..."
   curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/bbup/install | bash
-  export PATH="$HOME/.bbup/bin:$PATH"
+  export PATH="$HOME/.bb:$PATH"
   bbup
   info "bb installed"
 fi

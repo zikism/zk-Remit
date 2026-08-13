@@ -15,13 +15,13 @@ jobs:
         run: curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
       - name: Install nargo (0.36.0)
         run: |
-          export PATH="$HOME/.noirup/bin:$PATH"
+          export PATH="$HOME/.nargo/bin:$PATH"
           noirup -v 0.36.0
       - name: Install bbup
         run: curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/bbup/install | bash
       - name: Install bb
         run: |
-          export PATH="$HOME/.bbup/bin:$PATH"
+          export PATH="$HOME/.bb:$PATH"
           bbup
       - name: Cache nargo
         uses: actions/cache@v4

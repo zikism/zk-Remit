@@ -246,7 +246,7 @@ rustup --version
 rustup target add wasm32-unknown-unknown
 
 # Stellar CLI (Soroban)
-cargo install --locked stellar-cli --features opt
+cargo install --locked stellar-cli
 
 # Noir toolchain (nargo)
 curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash

@@ -21,13 +21,13 @@ jobs:
       - name: Install nargo (0.36.0)
         run: |
           curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
-          export PATH="$HOME/.noirup/bin:$PATH"
+          export PATH="$HOME/.nargo/bin:$PATH"
           noirup -v 0.36.0
 
       - name: Install bb (matching noir 0.36)
         run: |
           curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/master/barretenberg/bbup/install | bash
-          export PATH="$HOME/.bbup/bin:$PATH"
+          export PATH="$HOME/.bb:$PATH"
           bbup -v 0.36.0
 
       - name: Compile circuit
@@ -41,19 +41,19 @@ jobs:
       - name: Generate proof
         working-directory: circuits
         run: |
-          export PATH="$HOME/.bbup/bin:$PATH"
+          export PATH="$HOME/.bb:$PATH"
           bb prove -b ./target/zk_compliance.json -w ./target/zk_compliance.gz -o ./target/proof
 
       - name: Write verification key
         working-directory: circuits
         run: |
-          export PATH="$HOME/.bbup/bin:$PATH"
+          export PATH="$HOME/.bb:$PATH"
           bb write_vk -b ./target/zk_compliance.json -o ./target/vk
 
       - name: Verify proof against the verification key
         working-directory: circuits
         run: |
-          export PATH="$HOME/.bbup/bin:$PATH"
+          export PATH="$HOME/.bb:$PATH"
           bb verify -k ./target/vk -p ./target/proof
 
       - name: Package artifacts
