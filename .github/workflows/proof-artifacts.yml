@@ -32,11 +32,15 @@ jobs:
 
       - name: Compile circuit
         working-directory: circuits
-        run: nargo compile
+        run: |
+          export PATH="$HOME/.nargo/bin:$PATH"
+          nargo compile
 
       - name: Execute witness from committed Prover.toml
         working-directory: circuits
-        run: nargo execute
+        run: |
+          export PATH="$HOME/.nargo/bin:$PATH"
+          nargo execute
 
       - name: Generate proof
         working-directory: circuits

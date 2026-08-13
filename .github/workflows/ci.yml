@@ -24,13 +24,19 @@ jobs:
           key: nargo-${{ hashFiles('circuits/Nargo.toml') }}
       - name: Compile circuit
         working-directory: circuits
-        run: nargo compile
+        run: |
+          export PATH="$HOME/.nargo/bin:$PATH"
+          nargo compile
       - name: Run circuit tests
         working-directory: circuits
-        run: nargo test
+        run: |
+          export PATH="$HOME/.nargo/bin:$PATH"
+          nargo test
       - name: Validate committed Prover.toml produces a witness
         working-directory: circuits
-        run: nargo execute
+        run: |
+          export PATH="$HOME/.nargo/bin:$PATH"
+          nargo execute
 
   contracts:
     runs-on: ubuntu-latest
